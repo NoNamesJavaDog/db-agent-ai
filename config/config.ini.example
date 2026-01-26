@@ -1,0 +1,37 @@
+[database]
+host = localhost
+port = 5432
+database = your_database
+user = postgres
+password = your_password
+
+[llm]
+default_provider = deepseek
+
+[openai]
+api_key = your-openai-api-key
+model = gpt-4o
+
+[deepseek]
+api_key = your-deepseek-api-key
+model = deepseek-chat
+
+[claude]
+api_key = your-claude-api-key
+model = claude-sonnet-4-20250514
+
+[gemini]
+api_key = your-gemini-api-key
+model = gemini-pro
+
+[qwen]
+api_key = your-qwen-api-key
+model = qwen-turbo
+
+[ollama]
+api_key = ollama
+model = llama2
+base_url = http://localhost:11434/v1
+
+[preferences]
+language = en
