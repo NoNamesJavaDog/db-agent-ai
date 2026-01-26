@@ -188,7 +188,7 @@ ai_agent/
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/your-repo/db-agent.git
+git clone https://github.com/NoNamesJavaDog/db-agent-ai.git
 cd db-agent
 
 # 2. 安装依赖
@@ -731,8 +731,8 @@ Agent 可自动调用以下数据库工具：
 
 ## 📮 联系我们
 
-- 提交 Issue: [GitHub Issues](https://github.com/your-repo/db-agent/issues)
-- 邮箱: your-email@example.com
+- 提交 Issue: [GitHub Issues](https://github.com/NoNamesJavaDog/db-agent-ai/issues)
+- 邮箱: 1057135186@qq.com
 
 ---
 
