@@ -1,6 +1,8 @@
-# 🤖 DB Agent - 数据库智能助手
+**English** | [中文](README_ZH.md)
 
-> **让 DBA 失业的 AI 数据库管理专家** —— 自然语言操作数据库，SQL 优化、性能诊断、数据管理一句话搞定
+# DB Agent - AI Database Assistant
+
+> **The AI-Powered Database Expert** — Manage your database with natural language. SQL optimization, performance diagnostics, and data management made simple.
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
@@ -8,199 +10,199 @@
 
 ---
 
-## 📖 目录
+## Table of Contents
 
-- [产品介绍](#-产品介绍)
-- [核心功能](#-核心功能)
-- [系统架构](#-系统架构)
-- [安装部署](#-安装部署)
-- [快速开始](#-快速开始)
-- [使用场景](#-使用场景)
-- [配置说明](#-配置说明)
-- [API 服务](#-api-服务)
-- [常见问题](#-常见问题)
-
----
-
-## 🎯 产品介绍
-
-**DB Agent** 是一款革命性的 AI 数据库管理助手，它将复杂的数据库操作转化为简单的自然语言对话。无论你是开发者、数据分析师还是产品经理，都可以通过与 AI 对话的方式完成数据库的增删改查、性能优化、结构设计等工作。
-
-### 为什么选择 DB Agent？
-
-| 传统 DBA 方式 | DB Agent 方式 |
-|--------------|---------------|
-| 需要精通 SQL 语法 | 用自然语言描述需求 |
-| 手动分析执行计划 | AI 自动诊断性能问题 |
-| 查阅文档编写复杂查询 | 一句话生成优化 SQL |
-| 需要了解表结构才能操作 | AI 自动探索数据库结构 |
-| 索引优化需要丰富经验 | 智能推荐最佳索引策略 |
-| 7x24 小时待命 | AI 永不疲倦随时响应 |
-
-### 核心优势
-
-- **🧠 智能理解** - 基于大语言模型，真正理解你的意图
-- **🔒 安全可控** - 危险操作需二次确认，杜绝误操作
-- **🌍 多模型支持** - 支持 DeepSeek、OpenAI、Claude、Gemini、通义千问等主流模型
-- **🇨🇳 中英双语** - 完美支持中文交互，告别语言障碍
-- **📊 版本感知** - 自动识别数据库版本，生成兼容的 SQL
-- **⚡ 实时反馈** - 工具调用过程透明可见，执行结果即时展示
+- [Introduction](#-introduction)
+- [Key Features](#-key-features)
+- [Architecture](#-architecture)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Use Cases](#-use-cases)
+- [Configuration](#-configuration)
+- [API Service](#-api-service)
+- [FAQ](#-faq)
 
 ---
 
-## 🚀 核心功能
+## Introduction
 
-### 1. 数据查询与操作
-```
-👤 用户: 查看 users 表里上个月注册的用户有多少
-🤖 Agent: 正在查询... 上个月共有 1,234 位新用户注册
+**DB Agent** is a revolutionary AI database management assistant that transforms complex database operations into simple natural language conversations. Whether you're a developer, data analyst, or product manager, you can perform CRUD operations, performance optimization, and schema design through conversation with AI.
 
-👤 用户: 把状态为 inactive 且超过一年没登录的用户标记为 archived
-🤖 Agent: 这个操作会影响 856 条记录，确认执行吗？[是/否]
-```
+### Why DB Agent?
 
-### 2. 表结构管理
-```
-👤 用户: 帮我创建一个商品表，包含名称、价格、库存、分类
-🤖 Agent: 好的，我来创建 products 表...
-         [展示建表 SQL，等待确认]
+| Traditional DBA Approach | DB Agent Approach |
+|--------------------------|-------------------|
+| Must master SQL syntax | Describe requirements in plain English |
+| Manually analyze execution plans | AI automatically diagnoses performance issues |
+| Consult docs for complex queries | Generate optimized SQL with one sentence |
+| Need to know table structures | AI explores database schema automatically |
+| Index optimization requires experience | Smart recommendations for best index strategies |
+| 24/7 on-call required | AI never gets tired, always responsive |
 
-👤 用户: 给 orders 表加一个 shipping_address 字段
-🤖 Agent: 已添加 shipping_address 字段 (VARCHAR(500))
-```
+### Core Advantages
 
-### 3. 性能诊断与优化
-```
-👤 用户: 这个查询很慢，帮我分析一下：SELECT * FROM orders WHERE user_id = 123
-🤖 Agent: 分析结果：
-         ❌ 问题：user_id 列缺少索引，导致全表扫描
-         ✅ 建议：CREATE INDEX idx_orders_user_id ON orders(user_id)
-         📈 预期提升：查询速度提升 50-100 倍
-```
+- **Intelligent Understanding** - Powered by LLMs that truly understand your intent
+- **Safe & Controlled** - Dangerous operations require confirmation, preventing accidents
+- **Multi-Model Support** - Works with DeepSeek, OpenAI, Claude, Gemini, Qwen, Ollama
+- **Bilingual** - Full support for English and Chinese interactions
+- **Version Aware** - Auto-detects database version, generates compatible SQL
+- **Real-time Feedback** - Transparent tool execution with instant results
 
-### 4. 索引管理
+---
+
+## Key Features
+
+### 1. Data Query & Manipulation
 ```
-👤 用户: 检查 orders 表的索引使用情况
-🤖 Agent: 发现 3 个索引：
-         ✅ idx_orders_pkey - 使用频繁 (125,000 次扫描)
-         ✅ idx_orders_user_id - 使用正常 (45,000 次扫描)
-         ⚠️ idx_orders_old_status - 从未使用，建议删除 (节省 128MB)
+User: How many users registered last month in the users table?
+Agent: Querying... There were 1,234 new user registrations last month.
+
+User: Mark users with 'inactive' status who haven't logged in for over a year as 'archived'
+Agent: This operation will affect 856 records. Confirm execution? [Yes/No]
 ```
 
-### 5. 数据库健康检查
+### 2. Schema Management
 ```
-👤 用户: 检查数据库的整体健康状态
-🤖 Agent: 健康报告：
-         📊 表数量：23 个
-         💾 总大小：4.5 GB
-         ⚠️ 发现 3 个表有大量死元组，建议执行 VACUUM
-         ⚠️ 有 2 个慢查询需要优化
+User: Create a products table with name, price, inventory, and category
+Agent: I'll create the products table...
+       [Shows CREATE TABLE SQL, awaits confirmation]
+
+User: Add a shipping_address field to the orders table
+Agent: Added shipping_address field (VARCHAR(500))
+```
+
+### 3. Performance Diagnostics & Optimization
+```
+User: This query is slow, help me analyze it: SELECT * FROM orders WHERE user_id = 123
+Agent: Analysis results:
+       Problem: user_id column lacks an index, causing full table scan
+       Suggestion: CREATE INDEX idx_orders_user_id ON orders(user_id)
+       Expected improvement: 50-100x faster query performance
+```
+
+### 4. Index Management
+```
+User: Check index usage on the orders table
+Agent: Found 3 indexes:
+       idx_orders_pkey - Frequently used (125,000 scans)
+       idx_orders_user_id - Normal usage (45,000 scans)
+       idx_orders_old_status - Never used, recommend deletion (saves 128MB)
+```
+
+### 5. Database Health Check
+```
+User: Check the overall health status of the database
+Agent: Health Report:
+       Tables: 23
+       Total Size: 4.5 GB
+       Found 3 tables with excessive dead tuples, recommend VACUUM
+       Found 2 slow queries needing optimization
 ```
 
 ---
 
-## 🏗 系统架构
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        DB Agent                              │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   CLI 界面   │  │  API 服务   │  │  Web 界面   │         │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘         │
-│         │                │                │                 │
-│         └────────────────┼────────────────┘                 │
-│                          ▼                                  │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │                   SQLTuningAgent                       │ │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌───────────────┐  │ │
-│  │  │ 对话管理器   │  │  工具执行器  │  │ 安全确认机制  │  │ │
-│  │  └─────────────┘  └─────────────┘  └───────────────┘  │ │
-│  └───────────────────────────────────────────────────────┘ │
-│                          │                                  │
-│         ┌────────────────┼────────────────┐                │
-│         ▼                ▼                ▼                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │ LLM 客户端   │  │ 数据库工具   │  │   国际化     │        │
-│  │ ─────────── │  │ ─────────── │  │ ─────────── │        │
-│  │ • DeepSeek  │  │ • 查询执行   │  │ • 中文      │        │
-│  │ • OpenAI    │  │ • 表结构管理 │  │ • English   │        │
-│  │ • Claude    │  │ • 索引分析   │  └─────────────┘        │
-│  │ • Gemini    │  │ • 性能诊断   │                         │
-│  │ • Qwen      │  │ • EXPLAIN   │                         │
-│  │ • Ollama    │  └─────────────┘                         │
-│  └─────────────┘         │                                 │
-│                          ▼                                  │
-│                   ┌─────────────┐                          │
-│                   │ PostgreSQL  │                          │
-│                   │  Database   │                          │
-│                   └─────────────┘                          │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|                        DB Agent                              |
++-------------------------------------------------------------+
+|  +-----------+  +-----------+  +-----------+                |
+|  |    CLI    |  |    API    |  |    Web    |                |
+|  +-----+-----+  +-----+-----+  +-----+-----+                |
+|        |              |              |                       |
+|        +-------+------+------+-------+                       |
+|                |                                             |
+|  +-----------------------------------------------+          |
+|  |              SQLTuningAgent                    |          |
+|  |  +-----------+  +----------+  +------------+  |          |
+|  |  | Dialogue  |  |   Tool   |  |  Security  |  |          |
+|  |  | Manager   |  | Executor |  | Confirmer  |  |          |
+|  |  +-----------+  +----------+  +------------+  |          |
+|  +-----------------------------------------------+          |
+|                |                                             |
+|        +-------+-------+-------+                             |
+|        v               v       v                             |
+|  +-----------+  +-----------+  +-----------+                |
+|  |    LLM    |  | Database  |  |   i18n    |                |
+|  |  Clients  |  |   Tools   |  |           |                |
+|  | --------- |  | --------- |  | --------- |                |
+|  | DeepSeek  |  | Query     |  | English   |                |
+|  | OpenAI    |  | Schema    |  | Chinese   |                |
+|  | Claude    |  | Index     |  +-----------+                |
+|  | Gemini    |  | EXPLAIN   |                               |
+|  | Qwen      |  +-----------+                               |
+|  | Ollama    |        |                                     |
+|  +-----------+        v                                     |
+|                +-----------+                                |
+|                | PostgreSQL|                                |
+|                |  Database |                                |
+|                +-----------+                                |
++-------------------------------------------------------------+
 ```
 
-### 项目结构
+### Project Structure
 
 ```
 ai_agent/
-├── db_agent/                      # 主程序包
-│   ├── __init__.py                # 包导出
-│   ├── core/                      # 核心组件
-│   │   ├── agent.py               # SQLTuningAgent 智能体
-│   │   └── database.py            # DatabaseTools 数据库工具
-│   ├── llm/                       # LLM 客户端
-│   │   ├── base.py                # 基类
+├── db_agent/                      # Main package
+│   ├── __init__.py                # Package exports
+│   ├── core/                      # Core components
+│   │   ├── agent.py               # SQLTuningAgent
+│   │   └── database.py            # DatabaseTools
+│   ├── llm/                       # LLM clients
+│   │   ├── base.py                # Base class
 │   │   ├── openai_compatible.py   # OpenAI/DeepSeek/Qwen/Ollama
 │   │   ├── claude.py              # Anthropic Claude
 │   │   ├── gemini.py              # Google Gemini
-│   │   └── factory.py             # 客户端工厂
-│   ├── api/                       # API 服务
-│   │   └── server.py              # FastAPI 应用
-│   ├── cli/                       # 命令行界面
-│   │   ├── app.py                 # CLI 应用
-│   │   └── config.py              # 配置管理
-│   └── i18n/                      # 国际化
-│       └── translations.py        # 翻译文件
-├── config/                        # 配置文件
-│   └── config.ini                 # 主配置文件
-├── scripts/                       # 启动脚本
+│   │   └── factory.py             # Client factory
+│   ├── api/                       # API service
+│   │   └── server.py              # FastAPI application
+│   ├── cli/                       # Command line interface
+│   │   ├── app.py                 # CLI application
+│   │   └── config.py              # Configuration manager
+│   └── i18n/                      # Internationalization
+│       └── translations.py        # Translation files
+├── config/                        # Configuration files
+│   └── config.ini                 # Main configuration
+├── scripts/                       # Startup scripts
 │   ├── start.sh                   # Linux/macOS
 │   └── start.bat                  # Windows
-├── examples/                      # 示例代码
+├── examples/                      # Example code
 │   └── examples.py
-├── main.py                        # 程序入口
-├── requirements.txt               # 依赖清单
-└── README.md                      # 说明文档
+├── main.py                        # Entry point
+├── requirements.txt               # Dependencies
+└── README.md                      # Documentation
 ```
 
 ---
 
-## 📦 安装部署
+## Installation
 
-### 环境要求
+### Requirements
 
 - Python 3.8+
 - PostgreSQL 12+
-- 至少一个 LLM API Key（DeepSeek / OpenAI / Claude 等）
+- At least one LLM API Key (DeepSeek / OpenAI / Claude / etc.)
 
-### 方式一：直接安装
+### Option 1: Direct Installation
 
 ```bash
-# 1. 克隆项目
+# 1. Clone the repository
 git clone https://github.com/your-repo/db-agent.git
 cd db-agent
 
-# 2. 安装依赖
+# 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. 配置
-cp config/config.ini.example config/config.ini
-# 编辑 config/config.ini，填写数据库连接信息和 API Key
+# 3. Configure
+# Edit config/config.ini with your database credentials and API keys
 
-# 4. 启动
+# 4. Start
 python main.py
 ```
 
-### 方式二：使用启动脚本
+### Option 2: Using Startup Scripts
 
 **Linux / macOS:**
 ```bash
@@ -213,27 +215,27 @@ chmod +x scripts/start.sh
 scripts\start.bat
 ```
 
-### 依赖清单
+### Dependencies
 
 ```
 requirements.txt
-├── psycopg2-binary  # PostgreSQL 驱动
+├── psycopg2-binary  # PostgreSQL driver
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
 ├── google-generativeai  # Gemini API
-├── rich             # 终端美化
-├── prompt-toolkit   # 命令行增强
-├── fastapi          # API 服务
-└── uvicorn          # ASGI 服务器
+├── rich             # Terminal formatting
+├── prompt-toolkit   # CLI enhancements
+├── fastapi          # API service
+└── uvicorn          # ASGI server
 ```
 
 ---
 
-## ⚡ 快速开始
+## Quick Start
 
-### 1. 配置文件
+### 1. Configuration File
 
-编辑 `config/config.ini`：
+Edit `config/config.ini`:
 
 ```ini
 [database]
@@ -259,237 +261,237 @@ api_key = sk-ant-your-claude-api-key
 model = claude-sonnet-4-20250514
 ```
 
-### 2. 启动 CLI
+### 2. Start CLI
 
 ```bash
 python main.py
 ```
 
-### 3. 开始对话
+### 3. Start Chatting
 
 ```
-╭──────────────────────────────────────────╮
-│  数据库智能助手 - DeepSeek / deepseek-chat │
-╰──────────────────────────────────────────╯
++----------------------------------------------+
+|  Database Assistant - DeepSeek / deepseek-chat |
++----------------------------------------------+
 
-✓ 已连接: PostgreSQL 16.4
+Connected: PostgreSQL 16.4
 
-输入 /help 查看帮助，/model 切换模型，/language 切换语言，/exit 退出
+Type /help for help, /model to switch models, /language to switch language, /exit to quit
 
-De> 列出所有表
-  ● 列出表
-    ✓ 返回 12 条记录
+De> list all tables
+  * Listing tables
+    Returned 12 records
 
-╭─────────────────────────────────────────────────────────╮
-│ 当前数据库共有 12 张表：                                  │
-│                                                         │
-│ | 表名 | 大小 |                                          │
-│ |------|------|                                          │
-│ | users | 2.5 MB |                                       │
-│ | orders | 15.8 MB |                                     │
-│ | products | 1.2 MB |                                    │
-│ | ...  | ... |                                           │
-╰─────────────────────────────────────────────────────────╯
++-----------------------------------------------------+
+| The database contains 12 tables:                     |
+|                                                     |
+| | Table | Size |                                    |
+| |-------|------|                                    |
+| | users | 2.5 MB |                                  |
+| | orders | 15.8 MB |                                |
+| | products | 1.2 MB |                               |
+| | ...  | ... |                                      |
++-----------------------------------------------------+
 ```
 
-### 4. 常用命令
+### 4. Common Commands
 
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示帮助信息 |
-| `/model` | 切换 AI 模型 |
-| `/language` | 切换语言（中/英） |
-| `/reset` | 重置对话历史 |
-| `/history` | 查看对话历史 |
-| `/clear` | 清屏 |
-| `/exit` | 退出程序 |
+| Command | Description |
+|---------|-------------|
+| `/help` | Show help information |
+| `/model` | Switch AI model |
+| `/language` | Switch language (EN/ZH) |
+| `/reset` | Reset conversation history |
+| `/history` | View conversation history |
+| `/clear` | Clear screen |
+| `/exit` | Exit program |
 
 ---
 
-## 💡 使用场景
+## Use Cases
 
-### 场景一：开发者日常查询
+### Case 1: Developer Daily Queries
 
-**传统方式：** 打开数据库客户端 → 查看表结构 → 编写 SQL → 调试 → 执行
+**Traditional approach:** Open database client -> Check schema -> Write SQL -> Debug -> Execute
 
-**DB Agent 方式：**
+**DB Agent approach:**
 ```
-👤: 查看最近7天每天的订单数量和总金额
+User: Show me the order count and total amount for each of the last 7 days
 
-🤖: 好的，我来查询最近7天的订单统计...
+Agent: I'll query the order statistics for the last 7 days...
 
-    | 日期 | 订单数 | 总金额 |
-    |------|--------|--------|
-    | 2024-01-20 | 156 | ¥45,230.00 |
-    | 2024-01-19 | 143 | ¥38,920.00 |
+    | Date | Orders | Total Amount |
+    |------|--------|--------------|
+    | 2024-01-20 | 156 | $45,230.00 |
+    | 2024-01-19 | 143 | $38,920.00 |
     | ... | ... | ... |
 ```
 
-### 场景二：紧急故障排查
+### Case 2: Emergency Troubleshooting
 
-**凌晨3点，系统告警：数据库响应缓慢**
+**3 AM, system alert: Database responding slowly**
 
 ```
-👤: 现在有哪些正在执行的慢查询？
+User: What slow queries are currently running?
 
-🤖: 发现 3 个长时间运行的查询：
+Agent: Found 3 long-running queries:
 
-    1. PID: 12345 | 运行时间: 45.2秒
+    1. PID: 12345 | Runtime: 45.2s
        SELECT * FROM logs WHERE created_at > ...
-       ⚠️ 问题：全表扫描 logs 表（2000万行）
+       Problem: Full table scan on logs table (20 million rows)
 
-    2. PID: 12346 | 运行时间: 23.8秒
+    2. PID: 12346 | Runtime: 23.8s
        UPDATE orders SET status = ...
-       ⚠️ 问题：锁等待
+       Problem: Lock wait
 
-    建议：
-    - 考虑终止 PID 12345
-    - 为 logs.created_at 添加索引
+    Recommendations:
+    - Consider terminating PID 12345
+    - Add index on logs.created_at
 
-👤: 帮我创建那个索引
+User: Create that index for me
 
-🤖: 将创建索引：
+Agent: Will create index:
     CREATE INDEX CONCURRENTLY idx_logs_created_at ON logs(created_at);
 
-    ⚠️ 这是一个在线创建索引操作，不会锁表，但可能需要几分钟。
-    确认执行吗？[是/否]
+    This is an online index creation, won't lock the table, but may take a few minutes.
+    Confirm execution? [Yes/No]
 ```
 
-### 场景三：数据分析师提数
+### Case 3: Data Analyst Reporting
 
-**产品经理：我需要一份用户分析报告**
-
-```
-👤: 统计每个用户等级的用户数量、平均订单金额、最后活跃时间分布
-
-🤖: 好的，我来生成这份分析报告...
-
-    | 用户等级 | 用户数 | 平均订单金额 | 30天内活跃 | 90天内活跃 | 不活跃 |
-    |---------|--------|-------------|-----------|-----------|--------|
-    | VIP     | 1,234  | ¥892.50     | 78%       | 15%       | 7%     |
-    | 高级    | 5,678  | ¥456.30     | 65%       | 22%       | 13%    |
-    | 普通    | 23,456 | ¥123.80     | 45%       | 30%       | 25%    |
-
-    💡 洞察：
-    - VIP 用户活跃度最高，但占比仅 4%
-    - 普通用户中有 25% 已不活跃，建议进行召回营销
-```
-
-### 场景四：新项目表结构设计
+**Product Manager: I need a user analysis report**
 
 ```
-👤: 我要做一个博客系统，帮我设计数据库表结构
+User: Show user counts, average order amounts, and activity distribution by user tier
 
-🤖: 好的，我为你设计以下表结构：
+Agent: Generating the analysis report...
 
-    1. **users** - 用户表
+    | Tier | Users | Avg Order | Active 30d | Active 90d | Inactive |
+    |------|-------|-----------|------------|------------|----------|
+    | VIP  | 1,234 | $892.50   | 78%        | 15%        | 7%       |
+    | Gold | 5,678 | $456.30   | 65%        | 22%        | 13%      |
+    | Basic| 23,456| $123.80   | 45%        | 30%        | 25%      |
+
+    Insights:
+    - VIP users have highest engagement but only 4% of total
+    - 25% of basic users are inactive, consider re-engagement campaigns
+```
+
+### Case 4: New Project Schema Design
+
+```
+User: I'm building a blog system, design the database schema for me
+
+Agent: Here's the proposed schema:
+
+    1. **users** - User table
        - id, username, email, password_hash, avatar, created_at
 
-    2. **posts** - 文章表
+    2. **posts** - Article table
        - id, user_id, title, content, status, view_count, created_at, updated_at
 
-    3. **categories** - 分类表
+    3. **categories** - Category table
        - id, name, slug, parent_id
 
-    4. **tags** - 标签表
+    4. **tags** - Tag table
        - id, name, slug
 
-    5. **post_tags** - 文章标签关联表
+    5. **post_tags** - Post-tag association
        - post_id, tag_id
 
-    6. **comments** - 评论表
+    6. **comments** - Comment table
        - id, post_id, user_id, content, parent_id, created_at
 
-    需要我创建这些表吗？我可以生成完整的建表语句。
+    Want me to create these tables? I can generate the complete DDL statements.
 
-👤: 好的，创建吧
+User: Yes, create them
 
-🤖: [展示完整建表 SQL]
-    确认执行吗？[是/否]
+Agent: [Shows complete CREATE TABLE SQL]
+    Confirm execution? [Yes/No]
 ```
 
-### 场景五：定期维护优化
+### Case 5: Routine Maintenance
 
 ```
-👤: 帮我做一次全面的数据库健康检查
+User: Run a comprehensive database health check
 
-🤖: 正在进行全面检查...
+Agent: Running full diagnostics...
 
-    📊 **数据库概况**
-    - 版本：PostgreSQL 16.4
-    - 数据库大小：12.5 GB
-    - 表数量：45
-    - 活跃连接：23
+    **Database Overview**
+    - Version: PostgreSQL 16.4
+    - Size: 12.5 GB
+    - Tables: 45
+    - Active Connections: 23
 
-    ⚠️ **发现的问题**
+    **Issues Found**
 
-    1. **死元组过多** (3个表)
-       - orders: 15% 死元组，建议 VACUUM
-       - logs: 23% 死元组，建议 VACUUM FULL
-       - sessions: 45% 死元组，紧急！
+    1. **Excessive Dead Tuples** (3 tables)
+       - orders: 15% dead tuples, recommend VACUUM
+       - logs: 23% dead tuples, recommend VACUUM FULL
+       - sessions: 45% dead tuples, urgent!
 
-    2. **未使用的索引** (5个)
-       - idx_users_old_email: 从未使用，占用 56MB
-       - idx_orders_legacy: 从未使用，占用 128MB
+    2. **Unused Indexes** (5 indexes)
+       - idx_users_old_email: Never used, 56MB
+       - idx_orders_legacy: Never used, 128MB
        ...
 
-    3. **缺少索引** (2个查询)
-       - orders.customer_id 经常被查询但无索引
-       - products.category_id 经常被查询但无索引
+    3. **Missing Indexes** (2 queries)
+       - orders.customer_id frequently queried but no index
+       - products.category_id frequently queried but no index
 
-    4. **大表预警**
-       - logs 表已达 5GB，建议考虑分区或归档
+    4. **Large Table Warning**
+       - logs table at 5GB, consider partitioning or archiving
 
-    ✅ **优化建议**
-    1. 立即执行：VACUUM ANALYZE sessions;
-    2. 计划执行：删除 5 个未使用索引，释放 280MB
-    3. 长期规划：logs 表按月分区
+    **Recommendations**
+    1. Immediate: VACUUM ANALYZE sessions;
+    2. Scheduled: Drop 5 unused indexes, free 280MB
+    3. Long-term: Partition logs table by month
 
-    需要我执行这些优化操作吗？
+    Want me to execute these optimizations?
 ```
 
-### 场景六：非技术人员使用
+### Case 6: Non-Technical Users
 
-**运营同事想查数据，但不会写 SQL**
+**Operations colleague wants data but doesn't know SQL**
 
 ```
-👤: 我想看看上周销售额最高的10个商品
+User: Show me the top 10 best-selling products last week
 
-🤖: 好的，我来查询上周销售额 TOP 10 商品...
+Agent: Querying top 10 products by sales last week...
 
-    | 排名 | 商品名称 | 销量 | 销售额 |
-    |------|----------|------|--------|
-    | 1 | iPhone 15 Pro | 234 | ¥1,872,000 |
-    | 2 | MacBook Air M3 | 156 | ¥1,248,000 |
-    | 3 | AirPods Pro 2 | 445 | ¥889,110 |
+    | Rank | Product | Quantity | Revenue |
+    |------|---------|----------|---------|
+    | 1 | iPhone 15 Pro | 234 | $187,200 |
+    | 2 | MacBook Air M3 | 156 | $124,800 |
+    | 3 | AirPods Pro 2 | 445 | $88,911 |
     | ... | ... | ... | ... |
 
-👤: 这些商品主要是哪些地区的用户购买的？
+User: Which regions are these products mainly purchased from?
 
-🤖: 我来分析这些热销商品的购买地区分布...
-    [AI 记得上下文，自动分析这 10 个商品]
+Agent: Analyzing purchase regions for these top products...
+    [AI remembers context, automatically analyzes these 10 products]
 ```
 
 ---
 
-## ⚙️ 配置说明
+## Configuration
 
-### 数据库配置
+### Database Configuration
 
 ```ini
 [database]
-host = localhost      # 数据库主机
-port = 5432          # 端口号
-database = mydb      # 数据库名
-user = postgres      # 用户名
-password = secret    # 密码
+host = localhost      # Database host
+port = 5432          # Port number
+database = mydb      # Database name
+user = postgres      # Username
+password = secret    # Password
 ```
 
-### LLM 提供商配置
+### LLM Provider Configuration
 
-支持的提供商及配置方式：
+Supported providers and configuration:
 
-#### DeepSeek（推荐，性价比高）
+#### DeepSeek (Recommended - Best value)
 ```ini
 [deepseek]
 api_key = sk-your-api-key
@@ -517,14 +519,14 @@ api_key = your-api-key
 model = gemini-pro
 ```
 
-#### 阿里云通义千问
+#### Alibaba Qwen
 ```ini
 [qwen]
 api_key = your-api-key
 model = qwen-turbo
 ```
 
-#### Ollama（本地部署，免费）
+#### Ollama (Local deployment, free)
 ```ini
 [ollama]
 api_key = ollama
@@ -534,38 +536,38 @@ base_url = http://localhost:11434/v1
 
 ---
 
-## 🌐 API 服务
+## API Service
 
-DB Agent 提供 RESTful API，方便集成到其他系统。
+DB Agent provides a RESTful API for integration with other systems.
 
-### 启动 API 服务
+### Start API Service
 
 ```bash
 python -m db_agent.api.server
-# 或指定端口
+# Or specify port
 PORT=8080 python -m db_agent.api.server
 ```
 
-### API 端点
+### API Endpoints
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/v1/sessions` | 创建会话 |
-| POST | `/api/v1/chat` | 发送消息 |
-| GET | `/api/v1/sessions` | 列出会话 |
-| GET | `/api/v1/sessions/{id}/history` | 获取历史 |
-| DELETE | `/api/v1/sessions/{id}` | 删除会话 |
-| POST | `/api/v1/sessions/{id}/reset` | 重置会话 |
-| GET | `/api/v1/health` | 健康检查 |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/sessions` | Create session |
+| POST | `/api/v1/chat` | Send message |
+| GET | `/api/v1/sessions` | List sessions |
+| GET | `/api/v1/sessions/{id}/history` | Get history |
+| DELETE | `/api/v1/sessions/{id}` | Delete session |
+| POST | `/api/v1/sessions/{id}/reset` | Reset session |
+| GET | `/api/v1/health` | Health check |
 
-### 使用示例
+### Usage Example
 
 ```python
 import requests
 
 BASE_URL = "http://localhost:8000"
 
-# 1. 创建会话
+# 1. Create session
 resp = requests.post(f"{BASE_URL}/api/v1/sessions", json={
     "config": {
         "db_host": "localhost",
@@ -576,165 +578,165 @@ resp = requests.post(f"{BASE_URL}/api/v1/sessions", json={
     }
 })
 session_id = resp.json()["session_id"]
-print(f"会话ID: {session_id}")
+print(f"Session ID: {session_id}")
 
-# 2. 发送消息
+# 2. Send message
 resp = requests.post(f"{BASE_URL}/api/v1/chat", json={
     "session_id": session_id,
-    "message": "列出所有表"
+    "message": "list all tables"
 })
 print(resp.json()["response"])
 
-# 3. 继续对话（AI 会记住上下文）
+# 3. Continue conversation (AI remembers context)
 resp = requests.post(f"{BASE_URL}/api/v1/chat", json={
     "session_id": session_id,
-    "message": "第一个表有多少条数据？"
+    "message": "how many rows in the first table?"
 })
 print(resp.json()["response"])
 
-# 4. 删除会话
+# 4. Delete session
 requests.delete(f"{BASE_URL}/api/v1/sessions/{session_id}")
 ```
 
-### API 文档
+### API Documentation
 
-启动服务后访问：
+After starting the service, visit:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
 ---
 
-## 🔒 安全机制
+## Security
 
-### 1. 操作确认机制
+### 1. Operation Confirmation
 
-所有危险操作（INSERT / UPDATE / DELETE / DROP / CREATE 等）都需要用户二次确认：
+All dangerous operations (INSERT / UPDATE / DELETE / DROP / CREATE) require user confirmation:
 
 ```
-🤖: 即将执行以下 SQL：
+Agent: About to execute the following SQL:
 
     DELETE FROM users WHERE status = 'inactive';
 
-    ⚠️ 此操作将影响 1,234 行数据
-    确认执行吗？[是/否]
+    This operation will affect 1,234 rows
+    Confirm execution? [Yes/No]
 ```
 
-### 2. 只读查询保护
+### 2. Read-Only Query Protection
 
-`execute_safe_query` 工具只允许 SELECT 查询，防止误操作：
+The `execute_safe_query` tool only allows SELECT queries, preventing accidents:
 
 ```python
-# 只允许 SELECT，其他语句会被拒绝
-result = db_tools.execute_safe_query("SELECT * FROM users")  # ✅
-result = db_tools.execute_safe_query("DELETE FROM users")    # ❌ 被拒绝
+# Only SELECT allowed, other statements rejected
+result = db_tools.execute_safe_query("SELECT * FROM users")  # OK
+result = db_tools.execute_safe_query("DELETE FROM users")    # Rejected
 ```
 
-### 3. 索引创建保护
+### 3. Index Creation Protection
 
-默认使用 `CONCURRENTLY` 创建索引，不锁表：
+Uses `CONCURRENTLY` by default for index creation, avoiding table locks:
 
 ```sql
--- Agent 自动转换为：
+-- Agent automatically converts to:
 CREATE INDEX CONCURRENTLY idx_name ON table(column);
 ```
 
-### 4. 数据库版本感知
+### 4. Database Version Awareness
 
-Agent 自动检测 PostgreSQL 版本，生成兼容的 SQL：
+Agent auto-detects PostgreSQL version and generates compatible SQL:
 
 ```
-🤖: 检测到 PostgreSQL 16.4
-    将使用兼容此版本的 SQL 语法
+Agent: Detected PostgreSQL 16.4
+       Will use SQL syntax compatible with this version
 ```
 
 ---
 
-## ❓ 常见问题
+## FAQ
 
-### Q: 支持哪些数据库？
-**A:** 目前支持 PostgreSQL 12+。MySQL、SQL Server 等支持正在开发中。
+### Q: Which databases are supported?
+**A:** Currently PostgreSQL 12+. MySQL, SQL Server support is under development.
 
-### Q: 会不会误操作删除数据？
-**A:** 不会。所有 INSERT/UPDATE/DELETE/DROP 等危险操作都需要二次确认，你可以预览将要执行的 SQL 后再决定是否执行。
+### Q: Will it accidentally delete data?
+**A:** No. All INSERT/UPDATE/DELETE/DROP operations require confirmation. You can preview the SQL before deciding to execute.
 
-### Q: API Key 安全吗？
-**A:** API Key 存储在本地配置文件中，不会上传到任何服务器。建议设置适当的文件权限保护配置文件。
+### Q: Is my API Key secure?
+**A:** API Keys are stored in local config files only, never uploaded anywhere. Recommend setting appropriate file permissions.
 
-### Q: 可以连接远程数据库吗？
-**A:** 可以。在配置文件中填写远程数据库的地址和凭据即可。请确保网络可达且防火墙允许连接。
+### Q: Can I connect to remote databases?
+**A:** Yes. Enter remote database credentials in the config file. Ensure network connectivity and firewall rules allow the connection.
 
-### Q: 支持多数据库切换吗？
-**A:** 目前一个会话连接一个数据库。如需切换数据库，请重启程序并修改配置。
+### Q: Does it support multiple database switching?
+**A:** Currently one session connects to one database. To switch databases, restart the program with updated config.
 
-### Q: 如何处理大结果集？
-**A:** Agent 会自动限制返回的数据量。如需查看更多数据，可以明确告诉 Agent 你需要多少条记录。
+### Q: How are large result sets handled?
+**A:** Agent automatically limits returned data. If you need more records, explicitly tell the Agent how many you need.
 
-### Q: pg_stat_statements 未启用怎么办？
-**A:** 不影响使用。Agent 会自动降级使用 `pg_stat_activity` 来查看当前查询。如需历史慢查询分析，请启用 pg_stat_statements：
+### Q: What if pg_stat_statements is not enabled?
+**A:** Won't affect usage. Agent falls back to `pg_stat_activity` for current queries. For historical slow query analysis, enable pg_stat_statements:
 
 ```sql
 -- postgresql.conf
 shared_preload_libraries = 'pg_stat_statements'
 
--- 重启后执行
+-- After restart, execute:
 CREATE EXTENSION pg_stat_statements;
 ```
 
-### Q: 使用哪个 LLM 模型效果最好？
-**A:** 推荐：
-- **性价比首选**: DeepSeek（便宜且效果好）
-- **效果最佳**: Claude Sonnet 或 GPT-4o
-- **免费方案**: Ollama 本地部署 Llama2
+### Q: Which LLM model works best?
+**A:** Recommendations:
+- **Best Value**: DeepSeek (affordable and effective)
+- **Best Quality**: Claude Sonnet or GPT-4o
+- **Free Option**: Ollama with local Llama2
 
 ---
 
-## 🛠 Agent 工具集
+## Agent Tools
 
-Agent 可自动调用以下数据库工具：
+The Agent can automatically invoke these database tools:
 
-| 工具 | 说明 | 用途 |
-|------|------|------|
-| `list_tables` | 列出所有表 | 了解数据库结构 |
-| `describe_table` | 查看表结构 | 了解字段信息 |
-| `get_sample_data` | 获取示例数据 | 了解数据格式 |
-| `execute_sql` | 执行任意 SQL | 增删改查操作 |
-| `execute_safe_query` | 执行只读查询 | 安全查询数据 |
-| `run_explain` | 分析执行计划 | 性能诊断 |
-| `check_index_usage` | 检查索引使用 | 索引优化 |
-| `get_table_stats` | 获取表统计 | 健康检查 |
-| `create_index` | 创建索引 | 性能优化 |
-| `analyze_table` | 更新统计信息 | 维护优化 |
-| `identify_slow_queries` | 识别慢查询 | 性能诊断 |
-| `get_running_queries` | 查看运行中查询 | 实时监控 |
-
----
-
-## 📄 开源协议
-
-本项目采用 MIT 协议开源。
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| `list_tables` | List all tables | Explore database structure |
+| `describe_table` | View table schema | Understand column info |
+| `get_sample_data` | Get sample data | Understand data format |
+| `execute_sql` | Execute any SQL | CRUD operations |
+| `execute_safe_query` | Execute read-only query | Safe data queries |
+| `run_explain` | Analyze execution plan | Performance diagnostics |
+| `check_index_usage` | Check index usage | Index optimization |
+| `get_table_stats` | Get table statistics | Health checks |
+| `create_index` | Create index | Performance optimization |
+| `analyze_table` | Update statistics | Maintenance |
+| `identify_slow_queries` | Identify slow queries | Performance diagnostics |
+| `get_running_queries` | View running queries | Real-time monitoring |
 
 ---
 
-## 🤝 贡献指南
+## License
 
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 提交 Pull Request
+This project is open source under the MIT License.
 
 ---
 
-## 📮 联系我们
+## Contributing
 
-- 提交 Issue: [GitHub Issues](https://github.com/your-repo/db-agent/issues)
-- 邮箱: your-email@example.com
+Issues and Pull Requests are welcome!
+
+1. Fork this repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## Contact
+
+- Submit Issues: [GitHub Issues](https://github.com/your-repo/db-agent/issues)
+- Email: your-email@example.com
 
 ---
 
 <p align="center">
-  <b>🚀 让每个人都能轻松管理数据库，让 DBA 去做更有价值的事</b><br><br>
-  <sub>Built with ❤️ by DB Agent Team</sub>
+  <b>Making database management accessible to everyone</b><br><br>
+  <sub>Built with care by the DB Agent Team</sub>
 </p>
