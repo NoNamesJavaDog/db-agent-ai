@@ -42,12 +42,15 @@ agents: Dict[str, SQLTuningAgent] = {}
 # Pydantic模型
 class AgentConfig(BaseModel):
     """Agent配置"""
-    db_host: str = Field(default="localhost", description="数据库主机")
-    db_port: int = Field(default=5432, description="数据库端口")
-    db_name: str = Field(..., description="数据库名")
-    db_user: str = Field(..., description="数据库用户")
-    db_password: str = Field(..., description="数据库密码")
-    anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API Key(如果不提供则使用环境变量)")
+    db_host: str = Field(default="localhost", description="Database host")
+    db_port: int = Field(default=5432, description="Database port")
+    db_name: str = Field(..., description="Database name")
+    db_user: str = Field(..., description="Database user")
+    db_password: str = Field(..., description="Database password")
+    llm_provider: str = Field(default="deepseek", description="LLM provider: deepseek, openai, claude, gemini, qwen, ollama")
+    api_key: str = Field(..., description="LLM API Key")
+    model: Optional[str] = Field(default=None, description="Model name (optional, uses default for provider)")
+    base_url: Optional[str] = Field(default=None, description="Custom base URL (for ollama or custom endpoints)")
 
 class CreateSessionRequest(BaseModel):
     """创建会话请求"""
@@ -99,14 +102,6 @@ async def create_session(request: CreateSessionRequest):
         # 生成session ID
         session_id = str(uuid.uuid4())
 
-        # API Key
-        api_key = request.config.anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise HTTPException(
-                status_code=400,
-                detail=t("api_no_api_key")
-            )
-
         # 数据库配置
         db_config = {
             "host": request.config.db_host,
@@ -117,10 +112,16 @@ async def create_session(request: CreateSessionRequest):
         }
 
         # 创建LLM客户端
-        llm_client = LLMClientFactory.create(
-            provider="claude",
-            api_key=api_key
-        )
+        llm_kwargs = {
+            "provider": request.config.llm_provider,
+            "api_key": request.config.api_key
+        }
+        if request.config.model:
+            llm_kwargs["model"] = request.config.model
+        if request.config.base_url:
+            llm_kwargs["base_url"] = request.config.base_url
+
+        llm_client = LLMClientFactory.create(**llm_kwargs)
 
         # 创建Agent
         agent = SQLTuningAgent(
