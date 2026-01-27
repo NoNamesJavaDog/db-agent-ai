@@ -6,6 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
+[![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -43,6 +44,7 @@
 
 - **Intelligent Understanding** - Powered by LLMs that truly understand your intent
 - **Safe & Controlled** - Dangerous operations require confirmation, preventing accidents
+- **Error Recovery** - Automatically analyzes failures and retries with improved strategies
 - **Multi-Model Support** - Works with DeepSeek, OpenAI, Claude, Gemini, Qwen, Ollama
 - **Bilingual** - Full support for English and Chinese interactions
 - **Version Aware** - Auto-detects database version, generates compatible SQL
@@ -134,10 +136,10 @@ Agent: Health Report:
 |  | Qwen      |  +-----------+                               |
 |  | Ollama    |        |                                     |
 |  +-----------+        v                                     |
-|                +-----------+                                |
-|                | PostgreSQL|                                |
-|                |  Database |                                |
-|                +-----------+                                |
+|                +-------------+                              |
+|                | PostgreSQL  |                              |
+|                |    MySQL    |                              |
+|                +-------------+                              |
 +-------------------------------------------------------------+
 ```
 
@@ -149,7 +151,11 @@ ai_agent/
 │   ├── __init__.py                # Package exports
 │   ├── core/                      # Core components
 │   │   ├── agent.py               # SQLTuningAgent
-│   │   └── database.py            # DatabaseTools
+│   │   └── database/              # Database abstraction layer
+│   │       ├── base.py            # Base class (interface)
+│   │       ├── postgresql.py      # PostgreSQL implementation
+│   │       ├── mysql.py           # MySQL implementation
+│   │       └── factory.py         # Database tools factory
 │   ├── llm/                       # LLM clients
 │   │   ├── base.py                # Base class
 │   │   ├── openai_compatible.py   # OpenAI/DeepSeek/Qwen/Ollama
@@ -182,7 +188,7 @@ ai_agent/
 ### Requirements
 
 - Python 3.8+
-- PostgreSQL 12+
+- PostgreSQL 12+ or MySQL 5.7/8.0
 - At least one LLM API Key (DeepSeek / OpenAI / Claude / etc.)
 
 ### Option 1: Direct Installation
@@ -220,6 +226,7 @@ scripts\start.bat
 ```
 requirements.txt
 ├── psycopg2-binary  # PostgreSQL driver
+├── pymysql          # MySQL driver
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
 ├── google-generativeai  # Gemini API
@@ -239,8 +246,9 @@ Edit `config/config.ini`:
 
 ```ini
 [database]
+type = postgresql    # postgresql or mysql
 host = localhost
-port = 5432
+port = 5432          # 5432 for PostgreSQL, 3306 for MySQL
 database = your_database
 user = postgres
 password = your_password
@@ -478,12 +486,25 @@ Agent: Analyzing purchase regions for these top products...
 
 ### Database Configuration
 
+**PostgreSQL:**
 ```ini
 [database]
+type = postgresql     # Database type
 host = localhost      # Database host
-port = 5432          # Port number
+port = 5432          # PostgreSQL default port
 database = mydb      # Database name
 user = postgres      # Username
+password = secret    # Password
+```
+
+**MySQL:**
+```ini
+[database]
+type = mysql         # Database type
+host = localhost     # Database host
+port = 3306          # MySQL default port
+database = mydb      # Database name
+user = root          # Username
 password = secret    # Password
 ```
 
@@ -570,8 +591,9 @@ BASE_URL = "http://localhost:8000"
 # 1. Create session
 resp = requests.post(f"{BASE_URL}/api/v1/sessions", json={
     "config": {
+        "db_type": "postgresql",  # or "mysql"
         "db_host": "localhost",
-        "db_port": 5432,
+        "db_port": 5432,          # 5432 for PostgreSQL, 3306 for MySQL
         "db_name": "mydb",
         "db_user": "postgres",
         "db_password": "secret"
@@ -623,38 +645,85 @@ Agent: About to execute the following SQL:
 
 ### 2. Read-Only Query Protection
 
-The `execute_safe_query` tool only allows SELECT queries, preventing accidents:
+The `execute_safe_query` tool allows read-only statements without confirmation:
 
 ```python
-# Only SELECT allowed, other statements rejected
-result = db_tools.execute_safe_query("SELECT * FROM users")  # OK
-result = db_tools.execute_safe_query("DELETE FROM users")    # Rejected
+# Read-only statements execute directly
+result = db_tools.execute_safe_query("SELECT * FROM users")      # OK
+result = db_tools.execute_safe_query("SHOW TABLES")              # OK (MySQL)
+result = db_tools.execute_safe_query("DESCRIBE users")           # OK (MySQL)
+result = db_tools.execute_safe_query("EXPLAIN SELECT * FROM t")  # OK
+result = db_tools.execute_safe_query("DELETE FROM users")        # Rejected
 ```
+
+**Supported read-only statements:**
+- `SELECT` - Data queries
+- `SHOW` - Show database objects (MySQL)
+- `DESCRIBE` / `DESC` - Show table structure (MySQL)
+- `EXPLAIN` - Show execution plan
 
 ### 3. Index Creation Protection
 
-Uses `CONCURRENTLY` by default for index creation, avoiding table locks:
+Uses online DDL by default for index creation, minimizing table locks:
 
+**PostgreSQL:**
 ```sql
 -- Agent automatically converts to:
 CREATE INDEX CONCURRENTLY idx_name ON table(column);
 ```
 
+**MySQL (5.6+):**
+```sql
+-- Agent automatically converts to:
+ALTER TABLE table ADD INDEX idx_name (column), ALGORITHM=INPLACE, LOCK=NONE;
+```
+
 ### 4. Database Version Awareness
 
-Agent auto-detects PostgreSQL version and generates compatible SQL:
+Agent auto-detects database version and generates compatible SQL:
 
 ```
 Agent: Detected PostgreSQL 16.4
        Will use SQL syntax compatible with this version
 ```
 
+### 5. Intelligent Error Recovery
+
+When SQL execution fails, Agent automatically analyzes the error and retries with an improved approach:
+
+```
+User: Insert test data into users table
+
+Agent: I'll insert 100 test records...
+       [Shows INSERT SQL, awaits confirmation]
+
+User: Yes
+
+Agent: Error: Duplicate entry 'user001' for key 'users.username'
+
+       I see there's a duplicate key error. Let me modify the approach
+       to handle existing records...
+
+       [Shows modified SQL with INSERT IGNORE, awaits confirmation]
+
+User: Yes
+
+Agent: Successfully inserted 95 new records (5 duplicates skipped).
+       Continuing with the next step...
+```
+
+**Error recovery strategies:**
+- **Duplicate key** - Uses `INSERT IGNORE` or `ON DUPLICATE KEY UPDATE`
+- **Constraint violation** - Analyzes and fixes data, retries with corrected SQL
+- **Syntax error** - Fixes SQL syntax and retries
+- **Table/column not found** - Verifies structure first, then adjusts query
+
 ---
 
 ## FAQ
 
 ### Q: Which databases are supported?
-**A:** Currently PostgreSQL 12+. MySQL, SQL Server support is under development.
+**A:** Currently supports PostgreSQL 12+ and MySQL 5.7/8.0. SQL Server support is under development.
 
 ### Q: Will it accidentally delete data?
 **A:** No. All INSERT/UPDATE/DELETE/DROP operations require confirmation. You can preview the SQL before deciding to execute.
@@ -671,7 +740,7 @@ Agent: Detected PostgreSQL 16.4
 ### Q: How are large result sets handled?
 **A:** Agent automatically limits returned data. If you need more records, explicitly tell the Agent how many you need.
 
-### Q: What if pg_stat_statements is not enabled?
+### Q: What if pg_stat_statements is not enabled? (PostgreSQL)
 **A:** Won't affect usage. Agent falls back to `pg_stat_activity` for current queries. For historical slow query analysis, enable pg_stat_statements:
 
 ```sql
@@ -680,6 +749,15 @@ shared_preload_libraries = 'pg_stat_statements'
 
 -- After restart, execute:
 CREATE EXTENSION pg_stat_statements;
+```
+
+### Q: What if performance_schema is not enabled? (MySQL)
+**A:** Won't affect basic usage. Agent falls back to `information_schema.PROCESSLIST` for current queries. For detailed slow query analysis, enable performance_schema in MySQL configuration:
+
+```ini
+# my.cnf
+[mysqld]
+performance_schema = ON
 ```
 
 ### Q: Which LLM model works best?

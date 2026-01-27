@@ -1,5 +1,8 @@
 [database]
+# Database type: postgresql or mysql
+type = postgresql
 host = localhost
+# Port: 5432 for PostgreSQL, 3306 for MySQL
 port = 5432
 database = your_database
 user = postgres

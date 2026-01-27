@@ -6,6 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
+[![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -43,6 +44,7 @@
 
 - **🧠 智能理解** - 基于大语言模型，真正理解你的意图
 - **🔒 安全可控** - 危险操作需二次确认，杜绝误操作
+- **🔄 错误恢复** - 自动分析执行失败原因，智能调整策略重试
 - **🌍 多模型支持** - 支持 DeepSeek、OpenAI、Claude、Gemini、通义千问等主流模型
 - **🇨🇳 中英双语** - 完美支持中文交互，告别语言障碍
 - **📊 版本感知** - 自动识别数据库版本，生成兼容的 SQL
@@ -135,7 +137,7 @@
 │                          ▼                                  │
 │                   ┌─────────────┐                          │
 │                   │ PostgreSQL  │                          │
-│                   │  Database   │                          │
+│                   │   MySQL     │                          │
 │                   └─────────────┘                          │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -148,7 +150,11 @@ ai_agent/
 │   ├── __init__.py                # 包导出
 │   ├── core/                      # 核心组件
 │   │   ├── agent.py               # SQLTuningAgent 智能体
-│   │   └── database.py            # DatabaseTools 数据库工具
+│   │   └── database/              # 数据库抽象层
+│   │       ├── base.py            # 基类（接口定义）
+│   │       ├── postgresql.py      # PostgreSQL 实现
+│   │       ├── mysql.py           # MySQL 实现
+│   │       └── factory.py         # 数据库工具工厂
 │   ├── llm/                       # LLM 客户端
 │   │   ├── base.py                # 基类
 │   │   ├── openai_compatible.py   # OpenAI/DeepSeek/Qwen/Ollama
@@ -181,7 +187,7 @@ ai_agent/
 ### 环境要求
 
 - Python 3.8+
-- PostgreSQL 12+
+- PostgreSQL 12+ 或 MySQL 5.7/8.0
 - 至少一个 LLM API Key（DeepSeek / OpenAI / Claude 等）
 
 ### 方式一：直接安装
@@ -220,6 +226,7 @@ scripts\start.bat
 ```
 requirements.txt
 ├── psycopg2-binary  # PostgreSQL 驱动
+├── pymysql          # MySQL 驱动
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
 ├── google-generativeai  # Gemini API
@@ -239,8 +246,9 @@ requirements.txt
 
 ```ini
 [database]
+type = postgresql    # postgresql 或 mysql
 host = localhost
-port = 5432
+port = 5432          # PostgreSQL 默认 5432，MySQL 默认 3306
 database = your_database
 user = postgres
 password = your_password
@@ -478,12 +486,25 @@ De> 列出所有表
 
 ### 数据库配置
 
+**PostgreSQL:**
 ```ini
 [database]
+type = postgresql     # 数据库类型
 host = localhost      # 数据库主机
-port = 5432          # 端口号
+port = 5432          # PostgreSQL 默认端口
 database = mydb      # 数据库名
 user = postgres      # 用户名
+password = secret    # 密码
+```
+
+**MySQL:**
+```ini
+[database]
+type = mysql         # 数据库类型
+host = localhost     # 数据库主机
+port = 3306          # MySQL 默认端口
+database = mydb      # 数据库名
+user = root          # 用户名
 password = secret    # 密码
 ```
 
@@ -570,8 +591,9 @@ BASE_URL = "http://localhost:8000"
 # 1. 创建会话
 resp = requests.post(f"{BASE_URL}/api/v1/sessions", json={
     "config": {
+        "db_type": "postgresql",  # 或 "mysql"
         "db_host": "localhost",
-        "db_port": 5432,
+        "db_port": 5432,          # PostgreSQL 5432，MySQL 3306
         "db_name": "mydb",
         "db_user": "postgres",
         "db_password": "secret"
@@ -623,38 +645,84 @@ requests.delete(f"{BASE_URL}/api/v1/sessions/{session_id}")
 
 ### 2. 只读查询保护
 
-`execute_safe_query` 工具只允许 SELECT 查询，防止误操作：
+`execute_safe_query` 工具允许只读语句无需确认直接执行：
 
 ```python
-# 只允许 SELECT，其他语句会被拒绝
-result = db_tools.execute_safe_query("SELECT * FROM users")  # ✅
-result = db_tools.execute_safe_query("DELETE FROM users")    # ❌ 被拒绝
+# 只读语句直接执行
+result = db_tools.execute_safe_query("SELECT * FROM users")      # ✅
+result = db_tools.execute_safe_query("SHOW TABLES")              # ✅ (MySQL)
+result = db_tools.execute_safe_query("DESCRIBE users")           # ✅ (MySQL)
+result = db_tools.execute_safe_query("EXPLAIN SELECT * FROM t")  # ✅
+result = db_tools.execute_safe_query("DELETE FROM users")        # ❌ 被拒绝
 ```
+
+**支持的只读语句：**
+- `SELECT` - 数据查询
+- `SHOW` - 查看数据库对象 (MySQL)
+- `DESCRIBE` / `DESC` - 查看表结构 (MySQL)
+- `EXPLAIN` - 查看执行计划
 
 ### 3. 索引创建保护
 
-默认使用 `CONCURRENTLY` 创建索引，不锁表：
+默认使用在线 DDL 创建索引，最小化锁表：
 
+**PostgreSQL:**
 ```sql
 -- Agent 自动转换为：
 CREATE INDEX CONCURRENTLY idx_name ON table(column);
 ```
 
+**MySQL (5.6+):**
+```sql
+-- Agent 自动转换为：
+ALTER TABLE table ADD INDEX idx_name (column), ALGORITHM=INPLACE, LOCK=NONE;
+```
+
 ### 4. 数据库版本感知
 
-Agent 自动检测 PostgreSQL 版本，生成兼容的 SQL：
+Agent 自动检测数据库版本，生成兼容的 SQL：
 
 ```
 🤖: 检测到 PostgreSQL 16.4
     将使用兼容此版本的 SQL 语法
 ```
 
+### 5. 智能错误恢复
+
+当 SQL 执行失败时，Agent 会自动分析错误原因，调整策略后重试：
+
+```
+👤: 往 users 表插入测试数据
+
+🤖: 好的，我来插入 100 条测试记录...
+    [展示 INSERT SQL，等待确认]
+
+👤: 是
+
+🤖: 错误：Duplicate entry 'user001' for key 'users.username'
+
+    检测到重复键错误，我来调整策略处理已存在的记录...
+
+    [展示修改后的 SQL（使用 INSERT IGNORE），等待确认]
+
+👤: 是
+
+🤖: 成功插入 95 条新记录（跳过 5 条重复数据）。
+    继续执行下一步...
+```
+
+**错误恢复策略：**
+- **重复键错误** - 使用 `INSERT IGNORE` 或 `ON DUPLICATE KEY UPDATE`
+- **约束违反** - 分析并修正数据，使用修正后的 SQL 重试
+- **语法错误** - 修正 SQL 语法后重试
+- **表/列不存在** - 先确认结构，再调整查询
+
 ---
 
 ## ❓ 常见问题
 
 ### Q: 支持哪些数据库？
-**A:** 目前支持 PostgreSQL 12+。MySQL、SQL Server 等支持正在开发中。
+**A:** 目前支持 PostgreSQL 12+ 和 MySQL 5.7/8.0。SQL Server 等支持正在开发中。
 
 ### Q: 会不会误操作删除数据？
 **A:** 不会。所有 INSERT/UPDATE/DELETE/DROP 等危险操作都需要二次确认，你可以预览将要执行的 SQL 后再决定是否执行。
@@ -671,7 +739,7 @@ Agent 自动检测 PostgreSQL 版本，生成兼容的 SQL：
 ### Q: 如何处理大结果集？
 **A:** Agent 会自动限制返回的数据量。如需查看更多数据，可以明确告诉 Agent 你需要多少条记录。
 
-### Q: pg_stat_statements 未启用怎么办？
+### Q: pg_stat_statements 未启用怎么办？（PostgreSQL）
 **A:** 不影响使用。Agent 会自动降级使用 `pg_stat_activity` 来查看当前查询。如需历史慢查询分析，请启用 pg_stat_statements：
 
 ```sql
@@ -680,6 +748,15 @@ shared_preload_libraries = 'pg_stat_statements'
 
 -- 重启后执行
 CREATE EXTENSION pg_stat_statements;
+```
+
+### Q: performance_schema 未启用怎么办？（MySQL）
+**A:** 不影响基本使用。Agent 会自动降级使用 `information_schema.PROCESSLIST` 来查看当前查询。如需详细的慢查询分析，请在 MySQL 配置中启用 performance_schema：
+
+```ini
+# my.cnf
+[mysqld]
+performance_schema = ON
 ```
 
 ### Q: 使用哪个 LLM 模型效果最好？

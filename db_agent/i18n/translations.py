@@ -110,6 +110,16 @@ TRANSLATIONS = {
 
         # Agent/数据库工具消息
         "db_pg_stat_not_enabled": "pg_stat_statements未启用，显示当前活动查询",
+        "db_performance_schema_required": "需要启用performance_schema才能查看详细慢查询统计，显示当前活动查询",
+        "db_type_postgresql": "PostgreSQL",
+        "db_type_mysql": "MySQL",
+        "execution_feedback_header": "用户已确认执行，结果如下：",
+        "execution_feedback_continue": "请继续执行后续任务。",
+        "execution_feedback_has_errors": "注意：有些操作执行失败了。请分析错误原因，调整策略（例如：使用INSERT IGNORE或ON DUPLICATE KEY UPDATE处理重复键错误），然后用修改后的SQL重新请求确认执行，继续完成任务。",
+        "execution_feedback_all_success": "所有操作执行成功，请继续执行后续任务。",
+        "execution_result_success": "SQL {index}: 执行成功, {message}",
+        "execution_result_failed": "SQL {index}: 执行失败 - {error}",
+        "execution_result_skipped": "SQL {index}: 用户跳过",
         "db_table_not_found": "表 {schema}.{table} 不存在",
         "db_only_create_index": "只允许CREATE INDEX语句",
         "db_index_created": "索引创建成功",
@@ -238,6 +248,16 @@ TRANSLATIONS = {
 
         # Agent/Database tool messages
         "db_pg_stat_not_enabled": "pg_stat_statements not enabled, showing current active queries",
+        "db_performance_schema_required": "performance_schema must be enabled to view detailed slow query statistics, showing current active queries",
+        "db_type_postgresql": "PostgreSQL",
+        "db_type_mysql": "MySQL",
+        "execution_feedback_header": "User confirmed execution, results:",
+        "execution_feedback_continue": "Please continue with the remaining tasks.",
+        "execution_feedback_has_errors": "Note: Some operations failed. Please analyze the errors, adjust your strategy (e.g., use INSERT IGNORE or ON DUPLICATE KEY UPDATE to handle duplicate key errors), then request confirmation again with the modified SQL, and continue completing the task.",
+        "execution_feedback_all_success": "All operations executed successfully, please continue with the remaining tasks.",
+        "execution_result_success": "SQL {index}: Success, {message}",
+        "execution_result_failed": "SQL {index}: Failed - {error}",
+        "execution_result_skipped": "SQL {index}: Skipped by user",
         "db_table_not_found": "Table {schema}.{table} does not exist",
         "db_only_create_index": "Only CREATE INDEX statements are allowed",
         "db_index_created": "Index created successfully",

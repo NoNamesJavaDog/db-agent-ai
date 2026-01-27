@@ -1,16 +1,17 @@
 """
-Database Tools - Agent's "hands and eyes"
+PostgreSQL Database Tools - PostgreSQL-specific implementation
 """
 import psycopg2
 from typing import Dict, Any
 import logging
 from db_agent.i18n import t
+from .base import BaseDatabaseTools
 
 logger = logging.getLogger(__name__)
 
 
-class DatabaseTools:
-    """数据库工具集 - Agent的"手和眼睛"""
+class PostgreSQLTools(BaseDatabaseTools):
+    """PostgreSQL database tools implementation"""
 
     def __init__(self, db_config: Dict[str, Any]):
         self.db_config = db_config
@@ -18,36 +19,41 @@ class DatabaseTools:
         self.db_version_num = None
         self.db_version_full = None
         self._init_db_info()
-        logger.info(f"数据库工具初始化: {db_config['host']}:{db_config['database']} (PostgreSQL {self.db_version})")
+        logger.info(f"PostgreSQL tools initialized: {db_config['host']}:{db_config['database']} (PostgreSQL {self.db_version})")
+
+    @property
+    def db_type(self) -> str:
+        return "postgresql"
 
     def _init_db_info(self):
-        """初始化数据库信息"""
+        """Initialize database information"""
         try:
             conn = self.get_connection()
             cur = conn.cursor()
 
-            # 获取版本信息
+            # Get version information
             cur.execute("SELECT version();")
             self.db_version_full = cur.fetchone()[0]
 
-            # 获取版本号 (如 150004 表示 15.4)
+            # Get version number (e.g., 150004 means 15.4)
             cur.execute("SHOW server_version_num;")
             self.db_version_num = int(cur.fetchone()[0])
 
-            # 获取简短版本 (如 "15.4")
+            # Get short version (e.g., "15.4")
             cur.execute("SHOW server_version;")
             self.db_version = cur.fetchone()[0]
 
             conn.close()
         except Exception as e:
-            logger.warning(f"获取数据库版本信息失败: {e}")
+            logger.warning(f"Failed to get database version info: {e}")
             self.db_version = "unknown"
             self.db_version_num = 0
             self.db_version_full = "unknown"
 
     def get_db_info(self) -> Dict[str, Any]:
-        """获取数据库信息"""
+        """Get database information"""
         return {
+            "type": "postgresql",
             "version": self.db_version,
             "version_num": self.db_version_num,
             "version_full": self.db_version_full,
@@ -56,29 +62,29 @@ class DatabaseTools:
         }
 
     def get_connection(self):
-        """获取数据库连接"""
+        """Get database connection"""
         return psycopg2.connect(**self.db_config)
 
     def identify_slow_queries(self, min_duration_ms: float = 1000, limit: int = 20) -> Dict[str, Any]:
         """
-        识别慢查询
+        Identify slow queries
 
         Args:
-            min_duration_ms: 最小平均执行时间(毫秒)
-            limit: 返回结果数量
+            min_duration_ms: Minimum average execution time (milliseconds)
+            limit: Number of results to return
 
         Returns:
-            包含慢查询列表的字典
+            Dictionary containing slow query list
         """
         conn = self.get_connection()
         try:
             cur = conn.cursor()
 
-            # 先检查pg_stat_statements是否可用且已正确加载
+            # Check if pg_stat_statements is available and properly loaded
             has_pg_stat_statements = False
             pg_stat_version = "new"  # PostgreSQL 13+ uses *_exec_time, older uses *_time
             try:
-                # 尝试使用新版本列名 (PostgreSQL 13+)
+                # Try new version column names (PostgreSQL 13+)
                 cur.execute("SELECT total_exec_time, mean_exec_time FROM pg_stat_statements LIMIT 1;")
                 cur.fetchone()
                 has_pg_stat_statements = True
@@ -86,7 +92,7 @@ class DatabaseTools:
             except Exception:
                 conn.rollback()
                 try:
-                    # 尝试使用旧版本列名 (PostgreSQL 12 and earlier)
+                    # Try old version column names (PostgreSQL 12 and earlier)
                     cur.execute("SELECT total_time, mean_time FROM pg_stat_statements LIMIT 1;")
                     cur.fetchone()
                     has_pg_stat_statements = True
@@ -96,12 +102,12 @@ class DatabaseTools:
                     pass  # pg_stat_statements not available
 
             if not has_pg_stat_statements:
-                # 使用pg_stat_activity作为替代
+                # Use pg_stat_activity as alternative
                 result = self._get_active_queries(conn, limit)
                 conn.close()
                 return result
 
-            # 根据PostgreSQL版本选择正确的列名
+            # Select correct column names based on PostgreSQL version
             if pg_stat_version == "new":
                 # PostgreSQL 13+
                 query = """
@@ -171,7 +177,7 @@ class DatabaseTools:
             conn.close()
 
     def _get_active_queries(self, conn, limit: int = 20) -> Dict[str, Any]:
-        """获取当前活动查询（pg_stat_statements不可用时的备选方案）"""
+        """Get current active queries (fallback when pg_stat_statements is not available)"""
         try:
             cur = conn.cursor()
             query = """
@@ -222,7 +228,7 @@ class DatabaseTools:
             }
 
     def get_running_queries(self) -> Dict[str, Any]:
-        """获取当前正在运行的查询"""
+        """Get currently running queries"""
         conn = self.get_connection()
         try:
             cur = conn.cursor()
@@ -271,23 +277,23 @@ class DatabaseTools:
 
     def run_explain(self, sql: str, analyze: bool = False) -> Dict[str, Any]:
         """
-        运行EXPLAIN分析查询
+        Run EXPLAIN to analyze query
 
         Args:
-            sql: SQL语句
-            analyze: 是否实际执行(EXPLAIN ANALYZE)
+            sql: SQL statement
+            analyze: Whether to actually execute (EXPLAIN ANALYZE)
 
         Returns:
-            EXPLAIN输出结果
+            EXPLAIN output result
         """
-        logger.info(f"运行EXPLAIN分析: analyze={analyze}")
+        logger.info(f"Running EXPLAIN analysis: analyze={analyze}")
         logger.debug(f"SQL: {sql[:100]}...")
 
         conn = self.get_connection()
         try:
             cur = conn.cursor()
 
-            # 构建EXPLAIN语句
+            # Build EXPLAIN statement
             if analyze:
                 explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}"
             else:
@@ -296,7 +302,7 @@ class DatabaseTools:
             cur.execute(explain_sql)
             result = cur.fetchone()[0]
 
-            logger.info("EXPLAIN分析完成")
+            logger.info("EXPLAIN analysis completed")
 
             return {
                 "status": "success",
@@ -306,7 +312,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"EXPLAIN分析失败: {e}")
+            logger.error(f"EXPLAIN analysis failed: {e}")
             return {
                 "status": "error",
                 "error": str(e),
@@ -317,22 +323,22 @@ class DatabaseTools:
 
     def check_index_usage(self, table_name: str, schema: str = "public") -> Dict[str, Any]:
         """
-        检查表的索引使用情况
+        Check index usage for a table
 
         Args:
-            table_name: 表名
-            schema: 模式名
+            table_name: Table name
+            schema: Schema name
 
         Returns:
-            索引使用情况
+            Index usage information
         """
-        logger.info(f"检查索引使用: {schema}.{table_name}")
+        logger.info(f"Checking index usage: {schema}.{table_name}")
 
         conn = self.get_connection()
         try:
             cur = conn.cursor()
 
-            # 获取索引信息
+            # Get index information
             query = """
                 SELECT
                     i.indexname,
@@ -354,11 +360,11 @@ class DatabaseTools:
             columns = [desc[0] for desc in cur.description]
             indexes = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-            # 分析
+            # Analysis
             unused_indexes = [idx for idx in indexes if idx['idx_scan'] == 0 or idx['idx_scan'] is None]
             total_size = sum(idx['index_size_bytes'] or 0 for idx in indexes)
 
-            logger.info(f"找到 {len(indexes)} 个索引, {len(unused_indexes)} 个未使用")
+            logger.info(f"Found {len(indexes)} indexes, {len(unused_indexes)} unused")
 
             return {
                 "status": "success",
@@ -374,7 +380,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"检查索引失败: {e}")
+            logger.error(f"Index check failed: {e}")
             return {
                 "status": "error",
                 "error": str(e)
@@ -384,16 +390,16 @@ class DatabaseTools:
 
     def get_table_stats(self, table_name: str, schema: str = "public") -> Dict[str, Any]:
         """
-        获取表统计信息
+        Get table statistics
 
         Args:
-            table_name: 表名
-            schema: 模式名
+            table_name: Table name
+            schema: Schema name
 
         Returns:
-            表统计信息
+            Table statistics
         """
-        logger.info(f"获取表统计: {schema}.{table_name}")
+        logger.info(f"Getting table stats: {schema}.{table_name}")
 
         conn = self.get_connection()
         try:
@@ -427,7 +433,7 @@ class DatabaseTools:
 
             if result:
                 stats = dict(zip(columns, result))
-                logger.info(f"表统计获取成功")
+                logger.info(f"Table stats retrieved successfully")
                 return {
                     "status": "success",
                     "stats": stats
@@ -439,7 +445,7 @@ class DatabaseTools:
                 }
 
         except Exception as e:
-            logger.error(f"获取表统计失败: {e}")
+            logger.error(f"Failed to get table stats: {e}")
             return {
                 "status": "error",
                 "error": str(e)
@@ -449,26 +455,26 @@ class DatabaseTools:
 
     def create_index(self, index_sql: str, concurrent: bool = True) -> Dict[str, Any]:
         """
-        创建索引
+        Create index
 
         Args:
-            index_sql: CREATE INDEX语句
-            concurrent: 是否使用CONCURRENTLY(不锁表)
+            index_sql: CREATE INDEX statement
+            concurrent: Whether to use CONCURRENTLY (no table lock)
 
         Returns:
-            创建结果
+            Creation result
         """
-        logger.info(f"创建索引: concurrent={concurrent}")
+        logger.info(f"Creating index: concurrent={concurrent}")
         logger.info(f"SQL: {index_sql}")
 
-        # 安全检查
+        # Safety check
         if not index_sql.strip().upper().startswith("CREATE INDEX"):
             return {
                 "status": "error",
                 "error": t("db_only_create_index")
             }
 
-        # 添加CONCURRENTLY
+        # Add CONCURRENTLY
         if concurrent and "CONCURRENTLY" not in index_sql.upper():
             index_sql = index_sql.replace("CREATE INDEX", "CREATE INDEX CONCURRENTLY", 1)
 
@@ -479,7 +485,7 @@ class DatabaseTools:
             cur = conn.cursor()
             cur.execute(index_sql)
 
-            logger.info("索引创建成功")
+            logger.info("Index created successfully")
 
             return {
                 "status": "success",
@@ -488,7 +494,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"创建索引失败: {e}")
+            logger.error(f"Index creation failed: {e}")
             return {
                 "status": "error",
                 "error": str(e),
@@ -499,16 +505,16 @@ class DatabaseTools:
 
     def analyze_table(self, table_name: str, schema: str = "public") -> Dict[str, Any]:
         """
-        更新表统计信息(ANALYZE)
+        Update table statistics (ANALYZE)
 
         Args:
-            table_name: 表名
-            schema: 模式名
+            table_name: Table name
+            schema: Schema name
 
         Returns:
-            执行结果
+            Execution result
         """
-        logger.info(f"更新统计信息: {schema}.{table_name}")
+        logger.info(f"Updating statistics: {schema}.{table_name}")
 
         conn = self.get_connection()
         try:
@@ -516,7 +522,7 @@ class DatabaseTools:
             cur.execute(f"ANALYZE {schema}.{table_name};")
             conn.commit()
 
-            logger.info("统计信息更新成功")
+            logger.info("Statistics updated successfully")
 
             return {
                 "status": "success",
@@ -524,7 +530,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"更新统计信息失败: {e}")
+            logger.error(f"Failed to update statistics: {e}")
             conn.rollback()
             return {
                 "status": "error",
@@ -535,20 +541,25 @@ class DatabaseTools:
 
     def execute_safe_query(self, sql: str) -> Dict[str, Any]:
         """
-        执行安全的只读查询
+        Execute safe read-only query
 
         Args:
-            sql: SQL语句(必须是SELECT)
+            sql: SQL statement (SELECT, SHOW, EXPLAIN)
 
         Returns:
-            查询结果
+            Query result
         """
-        logger.info(f"执行安全查询")
+        logger.info(f"Executing safe query")
         logger.debug(f"SQL: {sql[:100]}...")
 
-        # 安全检查
+        # Safety check - allow read-only statements
         sql_upper = sql.strip().upper()
-        if not sql_upper.startswith("SELECT"):
+        is_safe = (
+            sql_upper.startswith("SELECT") or
+            sql_upper.startswith("SHOW") or
+            sql_upper.startswith("EXPLAIN")
+        )
+        if not is_safe:
             return {
                 "status": "error",
                 "error": t("db_only_select")
@@ -559,10 +570,10 @@ class DatabaseTools:
             cur = conn.cursor()
             cur.execute(sql)
 
-            columns = [desc[0] for desc in cur.description]
-            results = [dict(zip(columns, row)) for row in cur.fetchall()]
+            columns = [desc[0] for desc in cur.description] if cur.description else []
+            results = [dict(zip(columns, row)) for row in cur.fetchall()] if columns else []
 
-            logger.info(f"查询成功,返回 {len(results)} 行")
+            logger.info(f"Query successful, returned {len(results)} rows")
 
             return {
                 "status": "success",
@@ -571,7 +582,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"查询失败: {e}")
+            logger.error(f"Query failed: {e}")
             return {
                 "status": "error",
                 "error": str(e)
@@ -581,25 +592,32 @@ class DatabaseTools:
 
     def execute_sql(self, sql: str, confirmed: bool = False) -> Dict[str, Any]:
         """
-        执行任意SQL语句(INSERT/UPDATE/DELETE/CREATE/ALTER/DROP等)
+        Execute any SQL statement (INSERT/UPDATE/DELETE/CREATE/ALTER/DROP etc.)
 
         Args:
-            sql: SQL语句
-            confirmed: 是否已确认执行
+            sql: SQL statement
+            confirmed: Whether confirmed to execute
 
         Returns:
-            执行结果
+            Execution result
         """
         sql_upper = sql.strip().upper()
 
-        # SELECT 查询直接执行
-        if sql_upper.startswith("SELECT"):
+        # Read-only queries execute directly without confirmation
+        # SELECT, SHOW, EXPLAIN are all read-only
+        is_readonly = (
+            sql_upper.startswith("SELECT") or
+            sql_upper.startswith("SHOW") or
+            sql_upper.startswith("EXPLAIN")
+        )
+
+        if is_readonly:
             conn = self.get_connection()
             try:
                 cur = conn.cursor()
                 cur.execute(sql)
-                columns = [desc[0] for desc in cur.description]
-                results = [dict(zip(columns, row)) for row in cur.fetchall()]
+                columns = [desc[0] for desc in cur.description] if cur.description else []
+                results = [dict(zip(columns, row)) for row in cur.fetchall()] if columns else []
                 return {
                     "status": "success",
                     "type": "query",
@@ -615,7 +633,7 @@ class DatabaseTools:
             finally:
                 conn.close()
 
-        # 非 SELECT 操作需要确认
+        # Non-read-only operations require confirmation
         if not confirmed:
             return {
                 "status": "pending_confirmation",
@@ -623,7 +641,7 @@ class DatabaseTools:
                 "message": t("db_need_confirm")
             }
 
-        # 已确认，执行操作
+        # Confirmed, execute operation
         conn = self.get_connection()
         try:
             cur = conn.cursor()
@@ -639,7 +657,7 @@ class DatabaseTools:
 
         except Exception as e:
             conn.rollback()
-            logger.error(f"SQL执行失败: {e}")
+            logger.error(f"SQL execution failed: {e}")
             return {
                 "status": "error",
                 "error": str(e),
@@ -650,15 +668,15 @@ class DatabaseTools:
 
     def list_tables(self, schema: str = "public") -> Dict[str, Any]:
         """
-        列出数据库中的所有表
+        List all tables in the database
 
         Args:
-            schema: 模式名
+            schema: Schema name
 
         Returns:
-            表列表
+            Table list
         """
-        logger.info(f"列出表: schema={schema}")
+        logger.info(f"Listing tables: schema={schema}")
 
         conn = self.get_connection()
         try:
@@ -676,7 +694,7 @@ class DatabaseTools:
             columns = [desc[0] for desc in cur.description]
             tables = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-            logger.info(f"找到 {len(tables)} 个表")
+            logger.info(f"Found {len(tables)} tables")
 
             return {
                 "status": "success",
@@ -686,7 +704,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"列出表失败: {e}")
+            logger.error(f"Failed to list tables: {e}")
             return {
                 "status": "error",
                 "error": str(e)
@@ -696,22 +714,22 @@ class DatabaseTools:
 
     def describe_table(self, table_name: str, schema: str = "public") -> Dict[str, Any]:
         """
-        获取表结构信息
+        Get table structure information
 
         Args:
-            table_name: 表名
-            schema: 模式名
+            table_name: Table name
+            schema: Schema name
 
         Returns:
-            表结构信息
+            Table structure information
         """
-        logger.info(f"获取表结构: {schema}.{table_name}")
+        logger.info(f"Getting table structure: {schema}.{table_name}")
 
         conn = self.get_connection()
         try:
             cur = conn.cursor()
 
-            # 获取列信息
+            # Get column information
             cur.execute("""
                 SELECT
                     column_name,
@@ -727,7 +745,7 @@ class DatabaseTools:
             columns = [desc[0] for desc in cur.description]
             cols = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-            # 获取主键信息
+            # Get primary key information
             cur.execute("""
                 SELECT a.attname as column_name
                 FROM pg_index i
@@ -736,7 +754,7 @@ class DatabaseTools:
             """, (f"{schema}.{table_name}",))
             pk_columns = [row[0] for row in cur.fetchall()]
 
-            # 获取外键信息
+            # Get foreign key information
             cur.execute("""
                 SELECT
                     kcu.column_name,
@@ -754,7 +772,7 @@ class DatabaseTools:
             fk_columns = [desc[0] for desc in cur.description]
             fks = [dict(zip(fk_columns, row)) for row in cur.fetchall()]
 
-            logger.info(f"获取表结构成功: {len(cols)} 列")
+            logger.info(f"Table structure retrieved: {len(cols)} columns")
 
             return {
                 "status": "success",
@@ -765,7 +783,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"获取表结构失败: {e}")
+            logger.error(f"Failed to get table structure: {e}")
             return {
                 "status": "error",
                 "error": str(e)
@@ -775,17 +793,17 @@ class DatabaseTools:
 
     def get_sample_data(self, table_name: str, schema: str = "public", limit: int = 10) -> Dict[str, Any]:
         """
-        获取表的示例数据
+        Get sample data from a table
 
         Args:
-            table_name: 表名
-            schema: 模式名
-            limit: 返回行数
+            table_name: Table name
+            schema: Schema name
+            limit: Number of rows to return
 
         Returns:
-            示例数据
+            Sample data
         """
-        logger.info(f"获取示例数据: {schema}.{table_name}, limit={limit}")
+        logger.info(f"Getting sample data: {schema}.{table_name}, limit={limit}")
 
         conn = self.get_connection()
         try:
@@ -795,7 +813,7 @@ class DatabaseTools:
             columns = [desc[0] for desc in cur.description]
             rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-            logger.info(f"获取示例数据成功: {len(rows)} 行")
+            logger.info(f"Sample data retrieved: {len(rows)} rows")
 
             return {
                 "status": "success",
@@ -806,7 +824,7 @@ class DatabaseTools:
             }
 
         except Exception as e:
-            logger.error(f"获取示例数据失败: {e}")
+            logger.error(f"Failed to get sample data: {e}")
             return {
                 "status": "error",
                 "error": str(e)

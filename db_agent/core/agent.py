@@ -6,7 +6,7 @@ from typing import Dict, List, Any
 import logging
 from db_agent.llm import BaseLLMClient
 from db_agent.i18n import i18n, t
-from .database import DatabaseTools
+from .database import DatabaseToolsFactory
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,18 @@ class SQLTuningAgent:
 
         Args:
             llm_client: LLM客户端
-            db_config: 数据库配置
+            db_config: 数据库配置 (包含 type 字段指定数据库类型: postgresql 或 mysql)
             language: 界面语言 (zh/en)
         """
         self.llm_client = llm_client
-        self.db_tools = DatabaseTools(db_config)
+
+        # Extract and remove db_type from config (default to postgresql for backward compatibility)
+        db_config = db_config.copy()  # Don't modify the original
+        db_type = db_config.pop("type", "postgresql")
+        self.db_type = db_type
+
+        # Create database tools using factory
+        self.db_tools = DatabaseToolsFactory.create(db_type, db_config)
         self.db_info = self.db_tools.get_db_info()
         self.conversation_history = []
         self.pending_operations = []  # 待确认的SQL操作队列
@@ -38,7 +45,7 @@ class SQLTuningAgent:
         # 初始化系统提示和工具定义
         self._init_system_prompt()
 
-        logger.info(f"AI Agent初始化完成: {llm_client.get_provider_name()} - {llm_client.get_model_name()}")
+        logger.info(f"AI Agent初始化完成: {llm_client.get_provider_name()} - {llm_client.get_model_name()} (DB: {db_type})")
 
     def switch_model(self, llm_client: BaseLLMClient):
         """切换LLM模型"""
@@ -65,16 +72,52 @@ class SQLTuningAgent:
         db_version_full = self.db_info.get("version_full", "unknown")
         db_host = self.db_info.get("host", "unknown")
         db_name = self.db_info.get("database", "unknown")
+        db_type = self.db_info.get("type", self.db_type)
+
+        # Database type display name
+        db_type_name = "PostgreSQL" if db_type == "postgresql" else "MySQL"
+
+        # Database-specific notes
+        if db_type == "mysql":
+            db_specific_notes_en = """
+MySQL-specific notes:
+- Use backticks (`) for identifier quoting instead of double quotes
+- EXPLAIN ANALYZE is only available in MySQL 8.0.18+
+- Online DDL (ALGORITHM=INPLACE) is available for index creation in MySQL 5.6+
+- performance_schema must be enabled for detailed slow query analysis
+- Use SHOW CREATE TABLE for complete table definition"""
+            db_specific_notes_zh = """
+MySQL特定说明:
+- 使用反引号(`)而不是双引号来引用标识符
+- EXPLAIN ANALYZE仅在MySQL 8.0.18+版本可用
+- MySQL 5.6+支持在线DDL(ALGORITHM=INPLACE)创建索引
+- 需要启用performance_schema才能进行详细的慢查询分析
+- 使用SHOW CREATE TABLE查看完整的表定义"""
+        else:
+            db_specific_notes_en = """
+PostgreSQL-specific notes:
+- Use EXPLAIN (FORMAT JSON) for JSON output
+- CREATE INDEX CONCURRENTLY avoids table locks
+- pg_stat_statements extension provides detailed query statistics
+- Use \\d+ tablename in psql for detailed table info"""
+            db_specific_notes_zh = """
+PostgreSQL特定说明:
+- 使用EXPLAIN (FORMAT JSON)获取JSON格式输出
+- CREATE INDEX CONCURRENTLY可以避免锁表
+- pg_stat_statements扩展提供详细的查询统计
+- 在psql中使用\\d+ tablename查看详细表信息"""
 
         if self.language == "en":
-            self.system_prompt = f"""You are a PostgreSQL database management expert AI Agent.
+            self.system_prompt = f"""You are a {db_type_name} database management expert AI Agent.
 
 **IMPORTANT - Database Environment:**
-- PostgreSQL Version: {db_version}
+- Database Type: {db_type_name}
+- Version: {db_version}
 - Full Version Info: {db_version_full}
 - Database: {db_name} @ {db_host}
 
-You MUST generate SQL that is compatible with PostgreSQL {db_version}. Do not use features or syntax from newer versions.
+You MUST generate SQL that is compatible with {db_type_name} {db_version}. Do not use features or syntax from newer versions.
+{db_specific_notes_en}
 
 Your core capabilities:
 1. Database Operations - Execute INSERT, UPDATE, DELETE, CREATE TABLE and other SQL operations
@@ -102,21 +145,43 @@ Working principles:
 3. Confirmation mechanism - All non-SELECT operations (INSERT/UPDATE/DELETE/CREATE/DROP etc.) will require user confirmation before execution
 4. Detailed feedback - Inform the user of execution results after each operation
 
+**Error Handling & Self-Recovery (IMPORTANT):**
+When a SQL operation fails after user confirmation:
+1. **Don't give up** - Analyze the error, understand the cause, and find a solution
+2. **Self-reflect** - Think about why the error occurred (e.g., duplicate key, constraint violation, syntax error)
+3. **Adapt and retry** - Modify your approach based on the error:
+   - Duplicate key error: Modify the SQL to skip existing records (INSERT IGNORE) or handle duplicates (ON DUPLICATE KEY UPDATE), then retry
+   - Constraint violation: Check and fix the data, then retry with corrected SQL
+   - Syntax error: Fix the SQL syntax and retry
+   - Table/column not found: Verify structure first, then adjust query
+4. **Continue the workflow** - After resolving the error, proceed with remaining steps of the task
+5. **Report progress** - Briefly inform the user about the error and how you resolved it, then continue
+
+NOTE: You must STILL require user confirmation for every non-SELECT operation. The error recovery applies AFTER the user has confirmed execution.
+
+Example workflow for inserting test data:
+1. Show the INSERT SQL to user, wait for confirmation
+2. User confirms -> Execute
+3. If error occurs (e.g., duplicate key) -> Analyze error, modify SQL (e.g., add INSERT IGNORE), ask user to confirm the modified SQL
+4. Continue with next step of the task
+
 When communicating with users:
 - Use clear English explanations
 - Proactively display operation results
 - If uncertain, ask the user first
 
-Remember: You are the user's database assistant, helping them directly operate the database!"""
+Remember: You are the user's database assistant, helping them directly operate the database! Be resilient and complete the task even when facing minor errors."""
         else:
-            self.system_prompt = f"""你是一个PostgreSQL数据库管理专家AI Agent。
+            self.system_prompt = f"""你是一个{db_type_name}数据库管理专家AI Agent。
 
 **重要 - 数据库环境信息:**
-- PostgreSQL 版本: {db_version}
+- 数据库类型: {db_type_name}
+- 版本: {db_version}
 - 完整版本信息: {db_version_full}
 - 数据库: {db_name} @ {db_host}
 
-你必须生成与 PostgreSQL {db_version} 兼容的SQL语句。不要使用更高版本才支持的特性或语法。
+你必须生成与 {db_type_name} {db_version} 兼容的SQL语句。不要使用更高版本才支持的特性或语法。
+{db_specific_notes_zh}
 
 你的核心能力:
 1. 数据库操作 - 执行INSERT、UPDATE、DELETE、CREATE TABLE等SQL操作
@@ -144,12 +209,32 @@ Remember: You are the user's database assistant, helping them directly operate t
 3. 确认机制 - 所有非SELECT操作(INSERT/UPDATE/DELETE/CREATE/DROP等)都会要求用户确认后才执行
 4. 详细反馈 - 每次操作后告知用户执行结果
 
+**错误处理与自我修复（重要）:**
+当用户确认执行后SQL操作失败时：
+1. **不要放弃** - 分析错误原因，理解问题，寻找解决方案
+2. **自我反思** - 思考错误发生的原因（如：重复键、约束违反、语法错误）
+3. **调整并重试** - 根据错误调整策略：
+   - 重复键错误：修改SQL使用 INSERT IGNORE 或 ON DUPLICATE KEY UPDATE，然后重试
+   - 约束违反：检查并修正数据，使用修正后的SQL重试
+   - 语法错误：修正SQL语法后重试
+   - 表/列不存在：先确认结构，再调整查询
+4. **继续工作流程** - 解决错误后，继续执行任务的剩余步骤
+5. **报告进度** - 简要告知用户遇到的错误及处理方式，然后继续执行
+
+注意：你仍然必须对每个非SELECT操作要求用户确认！错误恢复机制是在用户确认执行之后才适用的。
+
+示例工作流程（插入测试数据）：
+1. 向用户展示 INSERT SQL，等待确认
+2. 用户确认 -> 执行
+3. 如果出错（如重复键）-> 分析错误，修改SQL（如添加 INSERT IGNORE），请求用户确认修改后的SQL
+4. 继续执行任务的下一步
+
 与用户交流时:
 - 使用清晰的中文解释
 - 主动展示操作结果
 - 如果不确定,先询问用户
 
-记住:你是用户的数据库助手,可以帮助他们直接操作数据库!"""
+记住:你是用户的数据库助手,可以帮助他们直接操作数据库！遇到小错误时要有韧性，坚持完成任务！"""
 
         # 初始化工具定义
         self._init_tools()
@@ -162,7 +247,7 @@ Remember: You are the user's database assistant, helping them directly operate t
                     "type": "function",
                     "function": {
                         "name": "identify_slow_queries",
-                        "description": "Identify slow queries in the database. Uses pg_stat_statements if available, otherwise shows current active queries.",
+                        "description": "Identify slow queries in the database. For PostgreSQL uses pg_stat_statements, for MySQL uses performance_schema. Falls back to active queries if statistics are not available.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -235,12 +320,12 @@ Remember: You are the user's database assistant, helping them directly operate t
                     "type": "function",
                     "function": {
                         "name": "create_index",
-                        "description": "Create an index. Requires user confirmation. Uses CONCURRENTLY by default to avoid table locks.",
+                        "description": "Create an index. Requires user confirmation. Uses online DDL when possible to minimize table locks (CONCURRENTLY for PostgreSQL, ALGORITHM=INPLACE for MySQL 5.6+).",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "index_sql": {"type": "string", "description": "CREATE INDEX statement"},
-                                "concurrent": {"type": "boolean", "description": "Use CONCURRENTLY (no table lock), default true"}
+                                "concurrent": {"type": "boolean", "description": "Use online DDL (no/minimal table lock), default true"}
                             },
                             "required": ["index_sql"]
                         }
@@ -341,7 +426,7 @@ Remember: You are the user's database assistant, helping them directly operate t
                     "type": "function",
                     "function": {
                         "name": "identify_slow_queries",
-                        "description": "识别数据库中的慢查询。优先使用pg_stat_statements，如不可用则显示当前活动查询。",
+                        "description": "识别数据库中的慢查询。PostgreSQL使用pg_stat_statements，MySQL使用performance_schema。如不可用则显示当前活动查询。",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -408,12 +493,12 @@ Remember: You are the user's database assistant, helping them directly operate t
                     "type": "function",
                     "function": {
                         "name": "create_index",
-                        "description": "创建索引。需要用户确认后才能执行。默认使用CONCURRENTLY避免锁表。返回创建结果。",
+                        "description": "创建索引。需要用户确认后才能执行。默认使用在线DDL避免锁表(PostgreSQL使用CONCURRENTLY，MySQL 5.6+使用ALGORITHM=INPLACE)。",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "index_sql": {"type": "string", "description": "CREATE INDEX语句"},
-                                "concurrent": {"type": "boolean", "description": "是否使用CONCURRENTLY(不锁表),默认true"}
+                                "concurrent": {"type": "boolean", "description": "是否使用在线DDL(不锁表/少锁表),默认true"}
                             },
                             "required": ["index_sql"]
                         }

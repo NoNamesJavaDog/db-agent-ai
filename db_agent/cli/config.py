@@ -27,9 +27,13 @@ class ConfigManager:
 
     def get_db_config(self) -> dict:
         """获取数据库配置"""
+        db_type = self.config.get('database', 'type', fallback='postgresql')
+        default_port = 5432 if db_type == 'postgresql' else 3306
+
         return {
+            "type": db_type,
             "host": self.config.get('database', 'host', fallback='localhost'),
-            "port": self.config.getint('database', 'port', fallback=5432),
+            "port": self.config.getint('database', 'port', fallback=default_port),
             "database": self.config.get('database', 'database', fallback='postgres'),
             "user": self.config.get('database', 'user', fallback='postgres'),
             "password": self.config.get('database', 'password', fallback='password')

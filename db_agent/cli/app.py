@@ -416,12 +416,11 @@ class AgentCLI:
         console.print()
         with console.status(f"[dim]{t('connecting')}[/]", spinner="dots"):
             try:
-                result = self.agent.db_tools.execute_safe_query("SELECT version();")
-                if result["status"] == "success":
-                    version = result["rows"][0]["version"].split(",")[0]
-                    console.print(f"[green]✓[/] {t('connected')}: [dim]{version}[/]")
-                else:
-                    console.print(f"[yellow]⚠[/] {t('connection_warning')}: [dim]{result.get('error', 'Unknown')}[/]")
+                # Use database info from the tools (already fetched during init)
+                db_info = self.agent.db_tools.get_db_info()
+                db_type = db_info.get("type", "postgresql").upper()
+                version = db_info.get("version", "unknown")
+                console.print(f"[green]✓[/] {t('connected')}: [dim]{db_type} {version}[/]")
             except Exception as e:
                 console.print(f"[red]✗[/] {t('connection_failed')}: [dim]{e}[/]")
 
@@ -488,13 +487,17 @@ class AgentCLI:
                     padding=(1, 2)
                 ))
 
-                # 检查是否有待确认的操作
-                if self.agent.has_pending_operations():
+                # 循环检查待确认的操作（支持错误后重试生成新的待确认操作）
+                while self.agent.has_pending_operations():
                     pending_ops = self.agent.get_all_pending_operations()
                     total = len(pending_ops)
 
                     console.print()
                     console.print(f"[yellow]{t('pending_operations', count=total)}[/]")
+
+                    # 收集执行结果
+                    execution_results = []
+                    has_errors = False  # 跟踪是否有执行失败的操作
 
                     for i, op in enumerate(pending_ops):
                         console.print()
@@ -511,12 +514,42 @@ class AgentCLI:
                             result = self.agent.confirm_operation(i)
                             if result.get("status") == "success":
                                 console.print(f"[green]✓[/] {result.get('message', t('execute_success'))}")
+                                execution_results.append(t('execution_result_success', index=i+1, message=result.get('message', '')))
                             else:
-                                console.print(f"[red]✗[/] {t('execute_failed')}: {result.get('error', t('error'))}")
+                                error_msg = result.get('error', t('error'))
+                                console.print(f"[red]✗[/] {t('execute_failed')}: {error_msg}")
+                                execution_results.append(t('execution_result_failed', index=i+1, error=error_msg))
+                                has_errors = True  # 标记有错误发生
                         else:
                             console.print(f"[dim]{t('skipped')}[/]")
+                            execution_results.append(t('execution_result_skipped', index=i+1))
 
                     self.agent.clear_pending_operations()
+
+                    # 自动发送执行结果给Agent，让它继续任务
+                    if execution_results:
+                        console.print()
+                        console.print(f"[dim]{t('thinking')}[/]")
+
+                        # 构建反馈消息 - 根据是否有错误使用不同的提示
+                        if has_errors:
+                            feedback_message = t('execution_feedback_header') + "\n" + "\n".join(execution_results) + "\n\n" + t('execution_feedback_has_errors')
+                        else:
+                            feedback_message = t('execution_feedback_header') + "\n" + "\n".join(execution_results) + "\n\n" + t('execution_feedback_all_success')
+
+                        # 继续对话
+                        response = self.agent.chat(feedback_message, on_thinking=on_thinking)
+                        console.print()
+
+                        # 显示响应
+                        console.print(Panel(
+                            Markdown(response),
+                            border_style="magenta",
+                            box=box.ROUNDED,
+                            padding=(1, 2)
+                        ))
+
+                        # 循环将自动检查是否有新的待确认操作
 
                 console.print()
 
