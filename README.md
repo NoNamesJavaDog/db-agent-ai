@@ -242,6 +242,64 @@ requirements.txt
 └── uvicorn          # ASGI server
 ```
 
+### Option 3: Offline Deployment (Intranet)
+
+For environments without internet access.
+
+#### Method A: Standalone Executable (Recommended)
+
+No Python installation required on target machine.
+
+**Build on a machine with internet:**
+```bash
+# 1. Install PyInstaller
+pip install pyinstaller
+
+# 2. Run build script
+scripts\build_package.bat      # Windows
+# or
+./scripts/build_package.sh     # Linux/macOS
+```
+
+**Output:**
+```
+dist/db-agent/
+├── db-agent.exe          # Main program (Windows) or db-agent (Linux)
+├── config/
+│   └── config.ini.example
+└── ... (runtime dependencies)
+```
+
+**Deploy to target machine:**
+1. Copy the entire `dist/db-agent/` folder to target machine
+2. Edit `config/config.ini` with database and API settings
+3. Run `db-agent.exe`
+
+#### Method B: Offline pip Install
+
+Target machine needs Python but no internet.
+
+**Download dependencies on a machine with internet:**
+```bash
+scripts\download_deps.bat      # Windows
+```
+
+**Package contents:**
+```
+project_folder/
+├── vendor/               # All dependency wheel packages
+├── requirements.txt
+├── install_offline.bat   # Offline install script
+└── ... (source code)
+```
+
+**Deploy to target machine:**
+1. Copy entire project folder to target machine
+2. Ensure Python 3.8+ is installed
+3. Run `install_offline.bat`
+4. Edit `config/config.ini`
+5. Run `python main.py`
+
 ---
 
 ## Quick Start

@@ -242,6 +242,64 @@ requirements.txt
 └── uvicorn          # ASGI 服务器
 ```
 
+### 方式三：内网离线部署
+
+适用于无法访问外网的内网环境。
+
+#### 方案 A：打包成独立可执行文件（推荐）
+
+无需在目标机器安装 Python，直接运行 exe 文件。
+
+**在联网机器上打包：**
+```bash
+# 1. 安装 PyInstaller
+pip install pyinstaller
+
+# 2. 运行打包脚本
+scripts\build_package.bat      # Windows
+# 或
+./scripts/build_package.sh     # Linux/macOS
+```
+
+**打包输出：**
+```
+dist/db-agent/
+├── db-agent.exe          # 主程序（Windows）或 db-agent（Linux）
+├── config/
+│   └── config.ini.example
+└── ... (运行时依赖)
+```
+
+**部署到目标机器：**
+1. 将 `dist/db-agent/` 整个文件夹复制到目标机器
+2. 编辑 `config/config.ini` 配置数据库和 API Key
+3. 运行 `db-agent.exe`
+
+#### 方案 B：离线 pip 安装
+
+目标机器需要有 Python 环境，但无需联网。
+
+**在联网机器上下载依赖：**
+```bash
+scripts\download_deps.bat      # Windows
+```
+
+**打包内容：**
+```
+项目目录/
+├── vendor/               # 所有依赖的 wheel 包
+├── requirements.txt
+├── install_offline.bat   # 离线安装脚本
+└── ... (源代码)
+```
+
+**部署到目标机器：**
+1. 将整个项目文件夹复制到目标机器
+2. 确保目标机器已安装 Python 3.8+
+3. 运行 `install_offline.bat`
+4. 编辑 `config/config.ini`
+5. 运行 `python main.py`
+
 ---
 
 ## ⚡ 快速开始
