@@ -1,6 +1,6 @@
 """
 GaussDB Database Tools - Centralized and Distributed mode support
-GaussDB database tools (Note: Uses GaussDB-specific psycopg2 driver, NOT standard PostgreSQL psycopg2)
+GaussDB database tools using standard PostgreSQL psycopg2 driver (compatible with Windows)
 """
 import psycopg2
 from typing import Dict, Any
