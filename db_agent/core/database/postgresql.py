@@ -1,7 +1,7 @@
 """
 PostgreSQL Database Tools - PostgreSQL-specific implementation
 """
-import psycopg2
+import pg8000
 from typing import Dict, Any
 import logging
 from db_agent.i18n import t
@@ -14,6 +14,7 @@ class PostgreSQLTools(BaseDatabaseTools):
     """PostgreSQL database tools implementation"""
 
     def __init__(self, db_config: Dict[str, Any]):
+        super().__init__()
         self.db_config = db_config
         self.db_version = None
         self.db_version_num = None
@@ -62,8 +63,14 @@ class PostgreSQLTools(BaseDatabaseTools):
         }
 
     def get_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection using pg8000"""
+        return pg8000.connect(
+            host=self.db_config.get("host", "localhost"),
+            port=int(self.db_config.get("port", 5432)),
+            database=self.db_config.get("database"),
+            user=self.db_config.get("user"),
+            password=self.db_config.get("password")
+        )
 
     def identify_slow_queries(self, min_duration_ms: float = 1000, limit: int = 20) -> Dict[str, Any]:
         """
@@ -103,9 +110,17 @@ class PostgreSQLTools(BaseDatabaseTools):
 
             if not has_pg_stat_statements:
                 # Use pg_stat_activity as alternative
-                result = self._get_active_queries(conn, limit)
-                conn.close()
-                return result
+                # Get a fresh connection since the current one may be in a bad state after rollbacks
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                new_conn = self.get_connection()
+                try:
+                    result = self._get_active_queries(new_conn, limit)
+                    return result
+                finally:
+                    new_conn.close()
 
             # Select correct column names based on PostgreSQL version
             if pg_stat_version == "new":
@@ -479,7 +494,7 @@ class PostgreSQLTools(BaseDatabaseTools):
             index_sql = index_sql.replace("CREATE INDEX", "CREATE INDEX CONCURRENTLY", 1)
 
         conn = self.get_connection()
-        conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+        conn.autocommit = True
 
         try:
             cur = conn.cursor()
@@ -552,12 +567,27 @@ class PostgreSQLTools(BaseDatabaseTools):
         logger.info(f"Executing safe query")
         logger.debug(f"SQL: {sql[:100]}...")
 
+        # Clean up the SQL
+        sql = sql.strip()
+        sql_upper = sql.upper()
+
+        # Auto-fix: If SQL looks like SELECT columns but missing SELECT keyword, prepend it
+        if not (sql_upper.startswith("SELECT") or
+                sql_upper.startswith("SHOW") or
+                sql_upper.startswith("EXPLAIN") or
+                sql_upper.startswith("WITH")):
+            # Check if it looks like a SELECT expression (contains AS, column aliases, or functions)
+            if " AS " in sql_upper or "(" in sql or "," in sql:
+                sql = "SELECT " + sql
+                sql_upper = sql.upper()
+                logger.info(f"Auto-prepended SELECT to query")
+
         # Safety check - allow read-only statements
-        sql_upper = sql.strip().upper()
         is_safe = (
             sql_upper.startswith("SELECT") or
             sql_upper.startswith("SHOW") or
-            sql_upper.startswith("EXPLAIN")
+            sql_upper.startswith("EXPLAIN") or
+            sql_upper.startswith("WITH")  # CTE queries
         )
         if not is_safe:
             return {

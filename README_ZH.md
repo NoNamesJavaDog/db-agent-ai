@@ -230,9 +230,9 @@ scripts\start.bat
 
 ```
 requirements.txt
-├── psycopg2-binary  # PostgreSQL 驱动
-├── pg8000           # GaussDB 驱动（支持 sha256 认证）
+├── pg8000           # PostgreSQL/GaussDB 驱动（支持 sha256 认证）
 ├── pymysql          # MySQL 驱动
+├── pydantic         # 数据验证（>=2.10.0 支持 Python 3.13）
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
 ├── google-generativeai  # Gemini API

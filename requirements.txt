@@ -1,10 +1,9 @@
 anthropic==0.18.1
-psycopg2-binary==2.9.9
 pg8000>=1.30.0
 pymysql>=1.1.0
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-pydantic==2.5.3
+pydantic>=2.10.0
 python-multipart==0.0.6
 openai>=1.0.0
 rich>=13.0.0

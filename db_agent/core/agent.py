@@ -668,7 +668,28 @@ Remember: You are the user's database assistant, helping them directly operate t
             elif tool_name == "analyze_table":
                 result = self.db_tools.analyze_table(**tool_input)
             elif tool_name == "execute_safe_query":
-                result = self.db_tools.execute_safe_query(**tool_input)
+                sql = tool_input.get("sql", "")
+
+                # 分析类查询性能检查
+                perf_check = self.db_tools.check_query_performance(sql)
+
+                if perf_check.get("should_confirm"):
+                    # 发现性能问题，加入待确认队列
+                    self.pending_operations.append({
+                        "type": "execute_safe_query",
+                        "input": tool_input,
+                        "performance_check": perf_check
+                    })
+                    result = {
+                        "status": "pending_performance_confirmation",
+                        "sql": sql,
+                        "performance_summary": perf_check.get("performance_summary"),
+                        "issues": perf_check.get("issues"),
+                        "message": t("db_performance_issue_need_confirm")
+                    }
+                else:
+                    # 无性能问题，直接执行
+                    result = self.db_tools.execute_safe_query(**tool_input)
             elif tool_name == "execute_sql":
                 result = self.db_tools.execute_sql(**tool_input)
                 # 如果需要确认，加入待确认队列
@@ -706,11 +727,22 @@ Remember: You are the user's database assistant, helping them directly operate t
         for op in self.pending_operations:
             if op["type"] == "execute_sql":
                 sql = op["input"].get("sql", "")
+                result.append({"type": op["type"], "sql": sql})
             elif op["type"] == "create_index":
                 sql = op["input"].get("index_sql", "")
+                result.append({"type": op["type"], "sql": sql})
+            elif op["type"] == "execute_safe_query":
+                sql = op["input"].get("sql", "")
+                perf_check = op.get("performance_check", {})
+                result.append({
+                    "type": op["type"],
+                    "sql": sql,
+                    "performance_issues": perf_check.get("issues", []),
+                    "performance_summary": perf_check.get("performance_summary", {})
+                })
             else:
                 sql = ""
-            result.append({"type": op["type"], "sql": sql})
+                result.append({"type": op["type"], "sql": sql})
         return result
 
     def confirm_operation(self, index: int) -> Dict[str, Any]:
@@ -724,6 +756,9 @@ Remember: You are the user's database assistant, helping them directly operate t
             return self.db_tools.execute_sql(pending["input"]["sql"], confirmed=True)
         elif pending["type"] == "create_index":
             return self.db_tools.create_index(**pending["input"])
+        elif pending["type"] == "execute_safe_query":
+            # 用户确认后执行查询（跳过性能检查）
+            return self.db_tools.execute_safe_query(**pending["input"])
 
         return {"status": "error", "error": t("db_unknown_pending_type")}
 

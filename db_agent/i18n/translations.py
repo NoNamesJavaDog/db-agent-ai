@@ -141,6 +141,10 @@ TRANSLATIONS = {
         "agent_need_more_time": "抱歉，我需要更多时间来分析这个问题。请尝试简化你的问题或分步骤询问。",
         "db_unsupported_provider": "不支持的提供商: {provider}",
 
+        # 性能检查
+        "db_performance_issue_need_confirm": "检测到性能问题，此查询需要用户确认后才能执行",
+        "db_performance_check_passed": "性能检查通过",
+
         # API Server
         "api_no_api_key": "未提供Anthropic API Key",
         "api_db_connection_failed": "数据库连接测试失败: {error}",
@@ -295,6 +299,10 @@ TRANSLATIONS = {
         "agent_conversation_error": "Conversation ended abnormally: {reason}",
         "agent_need_more_time": "Sorry, I need more time to analyze this problem. Please try simplifying your question or ask step by step.",
         "db_unsupported_provider": "Unsupported provider: {provider}",
+
+        # Performance Check
+        "db_performance_issue_need_confirm": "Performance issues detected, this query requires user confirmation before execution",
+        "db_performance_check_passed": "Performance check passed",
 
         # API Server
         "api_no_api_key": "Anthropic API Key not provided",

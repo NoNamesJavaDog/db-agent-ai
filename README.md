@@ -230,9 +230,9 @@ scripts\start.bat
 
 ```
 requirements.txt
-├── psycopg2-binary  # PostgreSQL driver
-├── pg8000           # GaussDB driver (sha256 auth support)
+├── pg8000           # PostgreSQL/GaussDB driver (sha256 auth support)
 ├── pymysql          # MySQL driver
+├── pydantic         # Data validation (>=2.10.0 for Python 3.13 support)
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
 ├── google-generativeai  # Gemini API

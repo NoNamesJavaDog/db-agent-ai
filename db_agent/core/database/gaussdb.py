@@ -17,6 +17,7 @@ class GaussDBTools(BaseDatabaseTools):
     """GaussDB database tools implementation (Centralized and Distributed modes)"""
 
     def __init__(self, db_config: Dict[str, Any]):
+        super().__init__()
         self.db_config = db_config
         self.db_version = None
         self.db_version_num = None
@@ -493,12 +494,27 @@ class GaussDBTools(BaseDatabaseTools):
         logger.info("Executing safe query")
         logger.debug(f"SQL: {sql[:100]}...")
 
+        # Clean up the SQL
+        sql = sql.strip()
+        sql_upper = sql.upper()
+
+        # Auto-fix: If SQL looks like SELECT columns but missing SELECT keyword, prepend it
+        if not (sql_upper.startswith("SELECT") or
+                sql_upper.startswith("SHOW") or
+                sql_upper.startswith("EXPLAIN") or
+                sql_upper.startswith("WITH")):
+            # Check if it looks like a SELECT expression (contains AS, column aliases, or functions)
+            if " AS " in sql_upper or "(" in sql or "," in sql:
+                sql = "SELECT " + sql
+                sql_upper = sql.upper()
+                logger.info(f"Auto-prepended SELECT to query")
+
         # Safety check - allow read-only statements
-        sql_upper = sql.strip().upper()
         is_safe = (
             sql_upper.startswith("SELECT") or
             sql_upper.startswith("SHOW") or
-            sql_upper.startswith("EXPLAIN")
+            sql_upper.startswith("EXPLAIN") or
+            sql_upper.startswith("WITH")  # CTE queries
         )
         if not is_safe:
             return {
