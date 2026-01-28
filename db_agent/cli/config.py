@@ -28,7 +28,14 @@ class ConfigManager:
     def get_db_config(self) -> dict:
         """获取数据库配置"""
         db_type = self.config.get('database', 'type', fallback='postgresql')
-        default_port = 5432 if db_type == 'postgresql' else 3306
+
+        # Default ports for different database types
+        default_ports = {
+            'postgresql': 5432,
+            'mysql': 3306,
+            'gaussdb': 5432  # GaussDB uses same default port as PostgreSQL
+        }
+        default_port = default_ports.get(db_type, 5432)
 
         return {
             "type": db_type,

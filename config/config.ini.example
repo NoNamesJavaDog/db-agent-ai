@@ -1,12 +1,26 @@
 [database]
-# Database type: postgresql or mysql
+# Database type: postgresql, mysql, or gaussdb
 type = postgresql
 host = localhost
-# Port: 5432 for PostgreSQL, 3306 for MySQL
+# Port: 5432 for PostgreSQL/GaussDB, 3306 for MySQL
 port = 5432
 database = your_database
 user = postgres
 password = your_password
+
+# GaussDB Configuration Notes:
+# - GaussDB requires a dedicated psycopg2 driver (NOT the standard PostgreSQL psycopg2)
+# - Driver package: GaussDB-Kernel-V500R002C10-EULER-64bit-Python.tar.gz
+# - Installation steps:
+#   1. Extract: tar -zxvf GaussDB-Kernel-V500R002C10-EULER-64bit-Python.tar.gz
+#   2. Copy psycopg2 to site-packages: cp -r psycopg2 /usr/lib/python3.x/site-packages/
+#   3. Set permissions: chmod 755 /usr/lib/python3.x/site-packages/psycopg2
+#   4. Configure environment:
+#      export LD_LIBRARY_PATH=/path/to/gaussdb/lib:$LD_LIBRARY_PATH
+#      export PYTHONPATH=/path/to/gaussdb:$PYTHONPATH
+# - Centralized mode: for OLTP workloads (uses PG_STAT_ACTIVITY)
+# - Distributed mode: for OLAP workloads (uses PGXC_STAT_ACTIVITY)
+# - Mode is auto-detected based on pgxc_node table
 
 [llm]
 default_provider = deepseek

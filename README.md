@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
+[![GaussDB](https://img.shields.io/badge/GaussDB-Centralized%20%7C%20Distributed-red.svg)](https://www.huaweicloud.com/product/gaussdb.html)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -139,6 +140,7 @@ Agent: Health Report:
 |                +-------------+                              |
 |                | PostgreSQL  |                              |
 |                |    MySQL    |                              |
+|                |   GaussDB   |                              |
 |                +-------------+                              |
 +-------------------------------------------------------------+
 ```
@@ -155,6 +157,7 @@ ai_agent/
 │   │       ├── base.py            # Base class (interface)
 │   │       ├── postgresql.py      # PostgreSQL implementation
 │   │       ├── mysql.py           # MySQL implementation
+│   │       ├── gaussdb.py         # GaussDB implementation (Centralized/Distributed)
 │   │       └── factory.py         # Database tools factory
 │   ├── llm/                       # LLM clients
 │   │   ├── base.py                # Base class
@@ -188,8 +191,10 @@ ai_agent/
 ### Requirements
 
 - Python 3.8+
-- PostgreSQL 12+ or MySQL 5.7/8.0
+- PostgreSQL 12+, MySQL 5.7/8.0, or GaussDB (Centralized/Distributed)
 - At least one LLM API Key (DeepSeek / OpenAI / Claude / etc.)
+
+> **Note for GaussDB users:** GaussDB requires a dedicated psycopg2 driver (NOT the standard PostgreSQL psycopg2). See [GaussDB Configuration](#gaussdb-huawei) for installation details.
 
 ### Option 1: Direct Installation
 
@@ -246,9 +251,9 @@ Edit `config/config.ini`:
 
 ```ini
 [database]
-type = postgresql    # postgresql or mysql
+type = postgresql    # postgresql, mysql, or gaussdb
 host = localhost
-port = 5432          # 5432 for PostgreSQL, 3306 for MySQL
+port = 5432          # 5432 for PostgreSQL/GaussDB, 3306 for MySQL
 database = your_database
 user = postgres
 password = your_password
@@ -508,6 +513,43 @@ user = root          # Username
 password = secret    # Password
 ```
 
+**GaussDB (Huawei):**
+```ini
+[database]
+type = gaussdb       # Database type
+host = localhost     # Database host
+port = 5432          # GaussDB default port (same as PostgreSQL)
+database = postgres  # Database name
+user = gaussdb       # Username
+password = secret    # Password
+```
+
+> **Important: GaussDB Driver Installation**
+>
+> GaussDB requires a **dedicated psycopg2 driver** - the standard PostgreSQL psycopg2 will NOT work.
+>
+> **Installation Steps:**
+> ```bash
+> # 1. Extract the driver package (provided by Huawei)
+> tar -zxvf GaussDB-Kernel-V500R002C10-EULER-64bit-Python.tar.gz
+>
+> # 2. Copy psycopg2 to Python site-packages
+> cp -r psycopg2 /usr/lib/python3.x/site-packages/
+>
+> # 3. Set permissions
+> chmod 755 /usr/lib/python3.x/site-packages/psycopg2
+>
+> # 4. Configure environment variables
+> export LD_LIBRARY_PATH=/path/to/gaussdb/lib:$LD_LIBRARY_PATH
+> export PYTHONPATH=/path/to/gaussdb:$PYTHONPATH
+> ```
+>
+> **Supported Modes:**
+> - **Centralized Mode**: Single node or HA cluster, suitable for OLTP workloads. Uses `PG_STAT_ACTIVITY` for monitoring.
+> - **Distributed Mode**: MPP architecture with multiple nodes, suitable for OLAP workloads. Uses `PGXC_STAT_ACTIVITY` for cross-node monitoring.
+>
+> The mode is automatically detected based on the `pgxc_node` system table.
+
 ### LLM Provider Configuration
 
 Supported providers and configuration:
@@ -591,9 +633,9 @@ BASE_URL = "http://localhost:8000"
 # 1. Create session
 resp = requests.post(f"{BASE_URL}/api/v1/sessions", json={
     "config": {
-        "db_type": "postgresql",  # or "mysql"
+        "db_type": "postgresql",  # or "mysql" or "gaussdb"
         "db_host": "localhost",
-        "db_port": 5432,          # 5432 for PostgreSQL, 3306 for MySQL
+        "db_port": 5432,          # 5432 for PostgreSQL/GaussDB, 3306 for MySQL
         "db_name": "mydb",
         "db_user": "postgres",
         "db_password": "secret"
@@ -723,7 +765,7 @@ Agent: Successfully inserted 95 new records (5 duplicates skipped).
 ## FAQ
 
 ### Q: Which databases are supported?
-**A:** Currently supports PostgreSQL 12+ and MySQL 5.7/8.0. SQL Server support is under development.
+**A:** Currently supports PostgreSQL 12+, MySQL 5.7/8.0, and GaussDB (both Centralized and Distributed modes). SQL Server support is under development.
 
 ### Q: Will it accidentally delete data?
 **A:** No. All INSERT/UPDATE/DELETE/DROP operations require confirmation. You can preview the SQL before deciding to execute.

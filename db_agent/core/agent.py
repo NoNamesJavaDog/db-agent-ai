@@ -74,11 +74,61 @@ class SQLTuningAgent:
         db_name = self.db_info.get("database", "unknown")
         db_type = self.db_info.get("type", self.db_type)
 
-        # Database type display name
-        db_type_name = "PostgreSQL" if db_type == "postgresql" else "MySQL"
+        # Database type display name and mode info
+        if db_type == "gaussdb":
+            db_type_name = "GaussDB"
+            is_distributed = self.db_info.get("is_distributed", False)
+            mode_info = " (Distributed)" if is_distributed else " (Centralized)"
+            db_type_name = f"GaussDB{mode_info}"
+        elif db_type == "mysql":
+            db_type_name = "MySQL"
+        else:
+            db_type_name = "PostgreSQL"
 
         # Database-specific notes
-        if db_type == "mysql":
+        if db_type == "gaussdb":
+            is_distributed = self.db_info.get("is_distributed", False)
+            if is_distributed:
+                db_specific_notes_en = """
+GaussDB (Distributed) specific notes:
+- Huawei proprietary database, PostgreSQL syntax compatible
+- Distributed mode (MPP architecture), suitable for OLAP scenarios
+- Use PGXC_STAT_ACTIVITY to view cross-node queries (query_id is same across nodes)
+- Use PGXC_THREAD_WAIT_STATUS for cross-node thread wait status
+- Use PGXC_LOCKS to check distributed lock information
+- Use EXPLAIN ANALYZE to analyze execution plans
+- Consider data distribution and skew issues in distributed mode
+- Check pgxc_node table for cluster node information"""
+                db_specific_notes_zh = """
+GaussDB (分布式) 特定说明:
+- 华为自研数据库，兼容 PostgreSQL 语法
+- 分布式模式 (MPP 架构)，适合 OLAP 场景
+- 使用 PGXC_STAT_ACTIVITY 查看跨节点查询（query_id 跨节点相同）
+- 使用 PGXC_THREAD_WAIT_STATUS 查看跨节点线程等待状态
+- 使用 PGXC_LOCKS 检查分布式锁信息
+- 使用 EXPLAIN ANALYZE 分析执行计划
+- 分布式模式注意数据分布和倾斜问题
+- 查看 pgxc_node 表获取集群节点信息"""
+            else:
+                db_specific_notes_en = """
+GaussDB (Centralized) specific notes:
+- Huawei proprietary database, PostgreSQL syntax compatible
+- Centralized mode (single node/HA cluster), suitable for OLTP scenarios
+- Use PG_STAT_ACTIVITY to view active queries
+- Use PG_THREAD_WAIT_STATUS for thread wait status
+- Use PG_LOCKS to check lock information
+- Use EXPLAIN ANALYZE to analyze execution plans
+- CREATE INDEX CONCURRENTLY avoids table locks"""
+                db_specific_notes_zh = """
+GaussDB (集中式) 特定说明:
+- 华为自研数据库，兼容 PostgreSQL 语法
+- 集中式模式（单节点/高可用集群），适合 OLTP 场景
+- 使用 PG_STAT_ACTIVITY 查看活跃查询
+- 使用 PG_THREAD_WAIT_STATUS 查看线程等待状态
+- 使用 PG_LOCKS 检查锁信息
+- 使用 EXPLAIN ANALYZE 分析执行计划
+- CREATE INDEX CONCURRENTLY 可以避免锁表"""
+        elif db_type == "mysql":
             db_specific_notes_en = """
 MySQL-specific notes:
 - Use backticks (`) for identifier quoting instead of double quotes

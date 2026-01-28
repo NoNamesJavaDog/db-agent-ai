@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
+[![GaussDB](https://img.shields.io/badge/GaussDB-集中式%20%7C%20分布式-red.svg)](https://www.huaweicloud.com/product/gaussdb.html)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -138,6 +139,7 @@
 │                   ┌─────────────┐                          │
 │                   │ PostgreSQL  │                          │
 │                   │   MySQL     │                          │
+│                   │   GaussDB   │                          │
 │                   └─────────────┘                          │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -154,6 +156,7 @@ ai_agent/
 │   │       ├── base.py            # 基类（接口定义）
 │   │       ├── postgresql.py      # PostgreSQL 实现
 │   │       ├── mysql.py           # MySQL 实现
+│   │       ├── gaussdb.py         # GaussDB 实现（集中式/分布式）
 │   │       └── factory.py         # 数据库工具工厂
 │   ├── llm/                       # LLM 客户端
 │   │   ├── base.py                # 基类
@@ -187,8 +190,10 @@ ai_agent/
 ### 环境要求
 
 - Python 3.8+
-- PostgreSQL 12+ 或 MySQL 5.7/8.0
+- PostgreSQL 12+、MySQL 5.7/8.0 或 GaussDB（集中式/分布式）
 - 至少一个 LLM API Key（DeepSeek / OpenAI / Claude 等）
+
+> **GaussDB 用户注意：** GaussDB 需要使用专用的 psycopg2 驱动（不是标准 PostgreSQL psycopg2）。详见 [GaussDB 配置](#gaussdb华为) 章节。
 
 ### 方式一：直接安装
 
@@ -246,9 +251,9 @@ requirements.txt
 
 ```ini
 [database]
-type = postgresql    # postgresql 或 mysql
+type = postgresql    # postgresql、mysql 或 gaussdb
 host = localhost
-port = 5432          # PostgreSQL 默认 5432，MySQL 默认 3306
+port = 5432          # PostgreSQL/GaussDB 默认 5432，MySQL 默认 3306
 database = your_database
 user = postgres
 password = your_password
@@ -508,6 +513,43 @@ user = root          # 用户名
 password = secret    # 密码
 ```
 
+**GaussDB（华为）:**
+```ini
+[database]
+type = gaussdb       # 数据库类型
+host = localhost     # 数据库主机
+port = 5432          # GaussDB 默认端口（与 PostgreSQL 相同）
+database = postgres  # 数据库名
+user = gaussdb       # 用户名
+password = secret    # 密码
+```
+
+> **重要：GaussDB 驱动安装说明**
+>
+> GaussDB 需要使用**专用的 psycopg2 驱动**，标准 PostgreSQL psycopg2 无法连接。
+>
+> **安装步骤：**
+> ```bash
+> # 1. 解压驱动包（由华为提供）
+> tar -zxvf GaussDB-Kernel-V500R002C10-EULER-64bit-Python.tar.gz
+>
+> # 2. 复制 psycopg2 到 Python site-packages
+> cp -r psycopg2 /usr/lib/python3.x/site-packages/
+>
+> # 3. 设置权限
+> chmod 755 /usr/lib/python3.x/site-packages/psycopg2
+>
+> # 4. 配置环境变量
+> export LD_LIBRARY_PATH=/path/to/gaussdb/lib:$LD_LIBRARY_PATH
+> export PYTHONPATH=/path/to/gaussdb:$PYTHONPATH
+> ```
+>
+> **支持的模式：**
+> - **集中式模式**：单节点或高可用集群，适合 OLTP 场景。使用 `PG_STAT_ACTIVITY` 进行监控。
+> - **分布式模式**：MPP 架构多节点，适合 OLAP 场景。使用 `PGXC_STAT_ACTIVITY` 进行跨节点监控。
+>
+> 系统会根据 `pgxc_node` 系统表自动检测运行模式。
+
 ### LLM 提供商配置
 
 支持的提供商及配置方式：
@@ -591,9 +633,9 @@ BASE_URL = "http://localhost:8000"
 # 1. 创建会话
 resp = requests.post(f"{BASE_URL}/api/v1/sessions", json={
     "config": {
-        "db_type": "postgresql",  # 或 "mysql"
+        "db_type": "postgresql",  # 或 "mysql" 或 "gaussdb"
         "db_host": "localhost",
-        "db_port": 5432,          # PostgreSQL 5432，MySQL 3306
+        "db_port": 5432,          # PostgreSQL/GaussDB 5432，MySQL 3306
         "db_name": "mydb",
         "db_user": "postgres",
         "db_password": "secret"
@@ -722,7 +764,7 @@ Agent 自动检测数据库版本，生成兼容的 SQL：
 ## ❓ 常见问题
 
 ### Q: 支持哪些数据库？
-**A:** 目前支持 PostgreSQL 12+ 和 MySQL 5.7/8.0。SQL Server 等支持正在开发中。
+**A:** 目前支持 PostgreSQL 12+、MySQL 5.7/8.0 和 GaussDB（集中式和分布式模式）。SQL Server 等支持正在开发中。
 
 ### Q: 会不会误操作删除数据？
 **A:** 不会。所有 INSERT/UPDATE/DELETE/DROP 等危险操作都需要二次确认，你可以预览将要执行的 SQL 后再决定是否执行。

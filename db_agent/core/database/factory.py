@@ -8,7 +8,7 @@ from .base import BaseDatabaseTools
 class DatabaseToolsFactory:
     """Factory class for creating database-specific tools"""
 
-    SUPPORTED_TYPES = ["postgresql", "mysql"]
+    SUPPORTED_TYPES = ["postgresql", "mysql", "gaussdb"]
 
     @staticmethod
     def create(db_type: str, db_config: Dict[str, Any]) -> BaseDatabaseTools:
@@ -16,7 +16,7 @@ class DatabaseToolsFactory:
         Create database tools instance based on database type
 
         Args:
-            db_type: Database type ("postgresql" or "mysql")
+            db_type: Database type ("postgresql", "mysql", or "gaussdb")
             db_config: Database configuration dictionary
 
         Returns:
@@ -33,6 +33,9 @@ class DatabaseToolsFactory:
         elif db_type == "mysql":
             from .mysql import MySQLTools
             return MySQLTools(db_config)
+        elif db_type == "gaussdb":
+            from .gaussdb import GaussDBTools
+            return GaussDBTools(db_config)
         else:
             raise ValueError(
                 f"Unsupported database type: {db_type}. "

@@ -42,9 +42,9 @@ agents: Dict[str, SQLTuningAgent] = {}
 # Pydantic模型
 class AgentConfig(BaseModel):
     """Agent配置"""
-    db_type: str = Field(default="postgresql", description="Database type: postgresql or mysql")
+    db_type: str = Field(default="postgresql", description="Database type: postgresql, mysql, or gaussdb")
     db_host: str = Field(default="localhost", description="Database host")
-    db_port: int = Field(default=5432, description="Database port (5432 for PostgreSQL, 3306 for MySQL)")
+    db_port: int = Field(default=5432, description="Database port (5432 for PostgreSQL/GaussDB, 3306 for MySQL)")
     db_name: str = Field(..., description="Database name")
     db_user: str = Field(..., description="Database user")
     db_password: str = Field(..., description="Database password")
