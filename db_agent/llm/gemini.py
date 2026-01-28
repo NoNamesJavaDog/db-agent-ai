@@ -12,9 +12,15 @@ logger = logging.getLogger(__name__)
 class GeminiClient(BaseLLMClient):
     """Google Gemini 客户端"""
 
-    def __init__(self, api_key: str, model: str = "gemini-pro"):
+    def __init__(self, api_key: str, model: str = "gemini-pro", base_url: str = None):
         import google.generativeai as genai
-        genai.configure(api_key=api_key)
+        # Configure with API key and optional custom endpoint
+        config_kwargs = {"api_key": api_key}
+        if base_url:
+            # Use client_options for custom endpoint
+            from google.api_core import client_options
+            config_kwargs["client_options"] = client_options.ClientOptions(api_endpoint=base_url)
+        genai.configure(**config_kwargs)
         self.model_name = model
         self.model = genai.GenerativeModel(model)
 

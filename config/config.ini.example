@@ -25,25 +25,35 @@ password = your_password
 [llm]
 default_provider = deepseek
 
+# Each provider supports optional base_url to use custom API endpoints
+# (e.g., proxy servers, self-hosted instances, or alternative API providers)
+
 [openai]
 api_key = your-openai-api-key
 model = gpt-4o
+# base_url = https://api.openai.com/v1
+# Example for Azure OpenAI:
+# base_url = https://your-resource.openai.azure.com/openai/deployments/your-deployment
 
 [deepseek]
 api_key = your-deepseek-api-key
 model = deepseek-chat
+# base_url = https://api.deepseek.com/v1
 
 [claude]
 api_key = your-claude-api-key
 model = claude-sonnet-4-20250514
+# base_url = https://api.anthropic.com
 
 [gemini]
 api_key = your-gemini-api-key
 model = gemini-pro
+# base_url = https://generativelanguage.googleapis.com
 
 [qwen]
 api_key = your-qwen-api-key
 model = qwen-turbo
+# base_url = https://dashscope.aliyuncs.com/compatible-mode/v1
 
 [ollama]
 api_key = ollama

@@ -12,9 +12,12 @@ logger = logging.getLogger(__name__)
 class ClaudeClient(BaseLLMClient):
     """Anthropic Claude 客户端"""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", base_url: str = None):
         from anthropic import Anthropic
-        self.client = Anthropic(api_key=api_key)
+        kwargs = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = Anthropic(**kwargs)
         self.model = model
 
     def _handle_api_error(self, error) -> Dict[str, Any]:

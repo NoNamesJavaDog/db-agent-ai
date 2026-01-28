@@ -58,9 +58,9 @@ class LLMClientFactory:
         base_url = base_url or info["base_url"]
 
         if provider == "claude":
-            return ClaudeClient(api_key=api_key, model=model)
+            return ClaudeClient(api_key=api_key, model=model, base_url=base_url)
         elif provider == "gemini":
-            return GeminiClient(api_key=api_key, model=model)
+            return GeminiClient(api_key=api_key, model=model, base_url=base_url)
         else:
             # OpenAI 兼容的提供商
             return OpenAICompatibleClient(
