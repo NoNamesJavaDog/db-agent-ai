@@ -204,7 +204,19 @@ GaussDB (集中式) 特定说明:
 5. PL/SQL差异：
    - %TYPE不支持record变量属性引用
    - FOR...REVERSE要求lower_bound >= upper_bound
-   - 集合比较严格按顺序，不像Oracle忽略顺序"""
+   - 集合比较严格按顺序，不像Oracle忽略顺序
+
+**补充说明：** 以上为GaussDB专用核心规则。对于核心规则未覆盖的Oracle语法，请参考Oracle→PostgreSQL的通用转换规则：
+- ROWNUM → LIMIT/OFFSET 或 ROW_NUMBER()
+- (+)外连接 → LEFT/RIGHT JOIN
+- MERGE INTO → INSERT ON CONFLICT (UPSERT)
+- NVL → COALESCE
+- DECODE → CASE WHEN
+- 序列: seq.NEXTVAL → nextval('seq')
+- LISTAGG → STRING_AGG
+- SYS_GUID() → GEN_RANDOM_UUID()
+- TO_DATE/TO_CHAR 格式字符串需调整
+- PL/SQL → PL/pgSQL 语法调整（PACKAGE不支持，用SCHEMA组织）"""
         elif db_type == "mysql":
             db_specific_notes_en = """
 MySQL-specific notes:

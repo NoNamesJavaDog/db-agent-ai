@@ -3,7 +3,315 @@ Database Migration Rules - 异构数据库迁移规则
 Contains syntax mappings and conversion rules between different databases
 """
 
-# Oracle to GaussDB Migration Rules
+# =============================================================================
+# Oracle to PostgreSQL Generic Rules (通用规则，也适用于GaussDB作为补充)
+# =============================================================================
+ORACLE_TO_POSTGRESQL_RULES = {
+    "description": "Oracle to PostgreSQL Generic Migration Rules",
+    "version": "1.0",
+    "notes": "这些规则也适用于GaussDB，作为GaussDB专用规则的补充",
+
+    # 数据类型映射
+    "data_types": {
+        "NUMBER": {"target": "NUMERIC", "notes": "NUMBER → NUMERIC；NUMBER(n) → NUMERIC(n)；无精度NUMBER → NUMERIC"},
+        "NUMBER(1)": {"target": "BOOLEAN", "notes": "可选转换，用于表示布尔值"},
+        "NUMBER(3)": {"target": "SMALLINT", "notes": "小整数优化"},
+        "NUMBER(10)": {"target": "INTEGER", "notes": "标准整数"},
+        "NUMBER(19)": {"target": "BIGINT", "notes": "大整数"},
+        "NUMBER(p,s)": {"target": "NUMERIC(p,s)", "notes": "保持精度"},
+        "VARCHAR2(n)": {"target": "VARCHAR(n)", "notes": "字符类型"},
+        "NVARCHAR2(n)": {"target": "VARCHAR(n)", "notes": "PostgreSQL原生支持Unicode"},
+        "CHAR(n)": {"target": "CHAR(n)", "notes": "定长字符"},
+        "NCHAR(n)": {"target": "CHAR(n)", "notes": "PostgreSQL原生支持Unicode"},
+        "CLOB": {"target": "TEXT", "notes": "大文本"},
+        "NCLOB": {"target": "TEXT", "notes": "大文本"},
+        "BLOB": {"target": "BYTEA", "notes": "二进制数据"},
+        "RAW(n)": {"target": "BYTEA", "notes": "二进制数据"},
+        "LONG": {"target": "TEXT", "notes": "已废弃类型"},
+        "LONG RAW": {"target": "BYTEA", "notes": "已废弃类型"},
+        "DATE": {"target": "TIMESTAMP(0)", "notes": "Oracle DATE包含时间部分"},
+        "TIMESTAMP": {"target": "TIMESTAMP", "notes": "时间戳"},
+        "TIMESTAMP WITH TIME ZONE": {"target": "TIMESTAMPTZ", "notes": "带时区时间戳"},
+        "TIMESTAMP WITH LOCAL TIME ZONE": {"target": "TIMESTAMPTZ", "notes": "转换为带时区"},
+        "INTERVAL YEAR TO MONTH": {"target": "INTERVAL", "notes": "间隔类型"},
+        "INTERVAL DAY TO SECOND": {"target": "INTERVAL", "notes": "间隔类型"},
+        "BINARY_FLOAT": {"target": "REAL", "notes": "单精度浮点"},
+        "BINARY_DOUBLE": {"target": "DOUBLE PRECISION", "notes": "双精度浮点"},
+        "XMLTYPE": {"target": "XML", "notes": "XML类型"},
+        "ROWID": {"target": "CHAR(18)", "notes": "或使用OID"},
+        "UROWID": {"target": "VARCHAR(4000)", "notes": "通用ROWID"},
+        "BFILE": {"target": "TEXT", "notes": "存储文件路径，文件需外部管理"},
+    },
+
+    # 函数映射
+    "functions": {
+        # 字符串函数
+        "CONCAT(a,b)": {"target": "a || b", "notes": "或使用CONCAT函数"},
+        "SUBSTR(s,p,l)": {"target": "SUBSTRING(s FROM p FOR l)", "notes": "或SUBSTR兼容"},
+        "INSTR(s,sub)": {"target": "POSITION(sub IN s)", "notes": "或STRPOS(s,sub)"},
+        "LENGTH(s)": {"target": "LENGTH(s)", "notes": "兼容"},
+        "LENGTHB(s)": {"target": "OCTET_LENGTH(s)", "notes": "字节长度"},
+        "UPPER(s)": {"target": "UPPER(s)", "notes": "兼容"},
+        "LOWER(s)": {"target": "LOWER(s)", "notes": "兼容"},
+        "INITCAP(s)": {"target": "INITCAP(s)", "notes": "兼容"},
+        "LTRIM(s)": {"target": "LTRIM(s)", "notes": "兼容"},
+        "RTRIM(s)": {"target": "RTRIM(s)", "notes": "兼容"},
+        "TRIM(s)": {"target": "TRIM(s)", "notes": "兼容"},
+        "LPAD(s,n,p)": {"target": "LPAD(s,n,p)", "notes": "兼容"},
+        "RPAD(s,n,p)": {"target": "RPAD(s,n,p)", "notes": "兼容"},
+        "REPLACE(s,a,b)": {"target": "REPLACE(s,a,b)", "notes": "兼容"},
+        "TRANSLATE(s,a,b)": {"target": "TRANSLATE(s,a,b)", "notes": "兼容"},
+        "ASCII(s)": {"target": "ASCII(s)", "notes": "兼容"},
+        "CHR(n)": {"target": "CHR(n)", "notes": "兼容"},
+        "REVERSE(s)": {"target": "REVERSE(s)", "notes": "兼容"},
+
+        # 数值函数
+        "ABS(n)": {"target": "ABS(n)", "notes": "兼容"},
+        "CEIL(n)": {"target": "CEIL(n)", "notes": "兼容"},
+        "FLOOR(n)": {"target": "FLOOR(n)", "notes": "兼容"},
+        "ROUND(n,d)": {"target": "ROUND(n,d)", "notes": "兼容"},
+        "TRUNC(n,d)": {"target": "TRUNC(n,d)", "notes": "兼容"},
+        "MOD(n,m)": {"target": "MOD(n,m)", "notes": "兼容"},
+        "POWER(n,m)": {"target": "POWER(n,m)", "notes": "兼容"},
+        "SQRT(n)": {"target": "SQRT(n)", "notes": "兼容"},
+        "SIGN(n)": {"target": "SIGN(n)", "notes": "兼容"},
+        "EXP(n)": {"target": "EXP(n)", "notes": "兼容"},
+        "LN(n)": {"target": "LN(n)", "notes": "兼容"},
+        "LOG(b,n)": {"target": "LOG(b,n)", "notes": "兼容"},
+
+        # 日期时间函数
+        "SYSDATE": {"target": "CURRENT_TIMESTAMP", "notes": "或NOW()或LOCALTIMESTAMP"},
+        "SYSTIMESTAMP": {"target": "CURRENT_TIMESTAMP", "notes": "带时区"},
+        "CURRENT_DATE": {"target": "CURRENT_DATE", "notes": "兼容"},
+        "CURRENT_TIMESTAMP": {"target": "CURRENT_TIMESTAMP", "notes": "兼容"},
+        "ADD_MONTHS(d,n)": {"target": "d + INTERVAL 'n months'", "notes": "使用INTERVAL"},
+        "MONTHS_BETWEEN(d1,d2)": {"target": "EXTRACT(YEAR FROM AGE(d1,d2))*12 + EXTRACT(MONTH FROM AGE(d1,d2))", "notes": "复杂转换"},
+        "LAST_DAY(d)": {"target": "(DATE_TRUNC('MONTH',d) + INTERVAL '1 MONTH - 1 DAY')::DATE", "notes": "需函数或表达式"},
+        "NEXT_DAY(d,day)": {"target": "自定义函数", "notes": "需创建函数"},
+        "TRUNC(d)": {"target": "DATE_TRUNC('DAY',d)", "notes": "日期截断"},
+        "TRUNC(d,'MM')": {"target": "DATE_TRUNC('MONTH',d)", "notes": "月截断"},
+        "TRUNC(d,'YY')": {"target": "DATE_TRUNC('YEAR',d)", "notes": "年截断"},
+        "EXTRACT(part FROM d)": {"target": "EXTRACT(part FROM d)", "notes": "兼容"},
+        "TO_DATE(s,fmt)": {"target": "TO_DATE(s,fmt)", "notes": "格式字符串有差异"},
+        "TO_CHAR(d,fmt)": {"target": "TO_CHAR(d,fmt)", "notes": "格式字符串有差异"},
+        "TO_TIMESTAMP(s,fmt)": {"target": "TO_TIMESTAMP(s,fmt)", "notes": "格式字符串有差异"},
+
+        # 转换函数
+        "TO_NUMBER(s)": {"target": "s::NUMERIC", "notes": "或CAST(s AS NUMERIC)"},
+        "TO_CHAR(n)": {"target": "n::TEXT", "notes": "或CAST(n AS TEXT)"},
+        "CAST(x AS type)": {"target": "CAST(x AS type)", "notes": "兼容"},
+        "HEXTORAW(s)": {"target": "DECODE(s, 'hex')", "notes": "十六进制转换"},
+        "RAWTOHEX(r)": {"target": "ENCODE(r, 'hex')", "notes": "转十六进制"},
+
+        # 空值函数
+        "NVL(a,b)": {"target": "COALESCE(a,b)", "notes": "标准SQL"},
+        "NVL2(a,b,c)": {"target": "CASE WHEN a IS NOT NULL THEN b ELSE c END", "notes": "CASE改写"},
+        "NULLIF(a,b)": {"target": "NULLIF(a,b)", "notes": "兼容"},
+        "COALESCE(a,b,...)": {"target": "COALESCE(a,b,...)", "notes": "兼容"},
+        "DECODE(e,s1,r1,...)": {"target": "CASE e WHEN s1 THEN r1 ... END", "notes": "CASE改写"},
+        "CASE WHEN...": {"target": "CASE WHEN...", "notes": "兼容"},
+
+        # 聚合函数
+        "COUNT(*)": {"target": "COUNT(*)", "notes": "兼容"},
+        "SUM(n)": {"target": "SUM(n)", "notes": "兼容"},
+        "AVG(n)": {"target": "AVG(n)", "notes": "兼容"},
+        "MIN(n)": {"target": "MIN(n)", "notes": "兼容"},
+        "MAX(n)": {"target": "MAX(n)", "notes": "兼容"},
+        "LISTAGG(col,sep)": {"target": "STRING_AGG(col,sep)", "notes": "字符串聚合"},
+        "WM_CONCAT(col)": {"target": "STRING_AGG(col,',')", "notes": "逗号分隔聚合"},
+
+        # 分析函数
+        "ROW_NUMBER() OVER()": {"target": "ROW_NUMBER() OVER()", "notes": "兼容"},
+        "RANK() OVER()": {"target": "RANK() OVER()", "notes": "兼容"},
+        "DENSE_RANK() OVER()": {"target": "DENSE_RANK() OVER()", "notes": "兼容"},
+        "LEAD(col,n) OVER()": {"target": "LEAD(col,n) OVER()", "notes": "兼容"},
+        "LAG(col,n) OVER()": {"target": "LAG(col,n) OVER()", "notes": "兼容"},
+        "FIRST_VALUE(col) OVER()": {"target": "FIRST_VALUE(col) OVER()", "notes": "兼容"},
+        "LAST_VALUE(col) OVER()": {"target": "LAST_VALUE(col) OVER()", "notes": "兼容"},
+
+        # 其他函数
+        "ROWNUM": {"target": "ROW_NUMBER() OVER()", "notes": "或LIMIT"},
+        "ROWID": {"target": "CTID", "notes": "PostgreSQL行标识"},
+        "SYS_GUID()": {"target": "GEN_RANDOM_UUID()", "notes": "或UUID扩展"},
+        "USER": {"target": "CURRENT_USER", "notes": "当前用户"},
+        "UID": {"target": "自定义", "notes": "需查询系统表"},
+        "USERENV('SESSIONID')": {"target": "PG_BACKEND_PID()", "notes": "会话ID"},
+        "GREATEST(a,b,...)": {"target": "GREATEST(a,b,...)", "notes": "兼容"},
+        "LEAST(a,b,...)": {"target": "LEAST(a,b,...)", "notes": "兼容"},
+    },
+
+    # SQL语法差异
+    "sql_syntax": {
+        # 分页
+        "ROWNUM <= n": {
+            "target": "LIMIT n",
+            "example": "SELECT * FROM t WHERE ROWNUM <= 10 → SELECT * FROM t LIMIT 10"
+        },
+        "ROWNUM分页": {
+            "target": "LIMIT OFFSET",
+            "example": """
+-- Oracle:
+SELECT * FROM (
+    SELECT a.*, ROWNUM rn FROM (SELECT * FROM t ORDER BY id) a
+    WHERE ROWNUM <= 20
+) WHERE rn > 10;
+
+-- PostgreSQL:
+SELECT * FROM t ORDER BY id LIMIT 10 OFFSET 10;
+"""
+        },
+        "FETCH FIRST": {
+            "target": "LIMIT",
+            "example": "FETCH FIRST 10 ROWS ONLY → LIMIT 10"
+        },
+
+        # 层次查询
+        "CONNECT BY": {
+            "target": "WITH RECURSIVE",
+            "notes": "递归CTE改写",
+            "example": """
+-- Oracle:
+SELECT id, parent_id, LEVEL FROM t
+START WITH parent_id IS NULL
+CONNECT BY PRIOR id = parent_id;
+
+-- PostgreSQL:
+WITH RECURSIVE cte AS (
+    SELECT id, parent_id, 1 AS level FROM t WHERE parent_id IS NULL
+    UNION ALL
+    SELECT t.id, t.parent_id, cte.level + 1
+    FROM t JOIN cte ON t.parent_id = cte.id
+)
+SELECT * FROM cte;
+"""
+        },
+        "SYS_CONNECT_BY_PATH": {"target": "递归CTE中拼接路径", "notes": "需手动实现"},
+        "CONNECT_BY_ROOT": {"target": "递归CTE中保留根节点", "notes": "需手动实现"},
+        "LEVEL伪列": {"target": "递归CTE中计数器", "notes": "需手动实现"},
+
+        # 序列
+        "seq.NEXTVAL": {"target": "nextval('seq')", "notes": "函数调用"},
+        "seq.CURRVAL": {"target": "currval('seq')", "notes": "函数调用"},
+        "CREATE SEQUENCE": {
+            "target": "CREATE SEQUENCE",
+            "notes": "语法略有差异",
+            "example": """
+-- Oracle:
+CREATE SEQUENCE seq START WITH 1 INCREMENT BY 1;
+
+-- PostgreSQL:
+CREATE SEQUENCE seq START WITH 1 INCREMENT BY 1;
+-- 或使用IDENTITY列:
+CREATE TABLE t (id INTEGER GENERATED ALWAYS AS IDENTITY);
+"""
+        },
+
+        # 外连接
+        "(+)外连接": {
+            "target": "LEFT/RIGHT JOIN",
+            "notes": "标准SQL JOIN语法",
+            "example": """
+-- Oracle:
+SELECT * FROM a, b WHERE a.id = b.id(+);
+
+-- PostgreSQL:
+SELECT * FROM a LEFT JOIN b ON a.id = b.id;
+"""
+        },
+
+        # MERGE语句
+        "MERGE INTO": {
+            "target": "INSERT ON CONFLICT",
+            "notes": "或使用CTE实现UPSERT",
+            "example": """
+-- Oracle MERGE:
+MERGE INTO target t USING source s ON (t.id = s.id)
+WHEN MATCHED THEN UPDATE SET t.val = s.val
+WHEN NOT MATCHED THEN INSERT (id, val) VALUES (s.id, s.val);
+
+-- PostgreSQL UPSERT:
+INSERT INTO target (id, val) SELECT id, val FROM source
+ON CONFLICT (id) DO UPDATE SET val = EXCLUDED.val;
+"""
+        },
+
+        # 空字符串
+        "空字符串处理": {
+            "notes": "Oracle中''等同于NULL，PostgreSQL中''是空字符串",
+            "warning": "这是重要差异，需检查业务逻辑"
+        },
+
+        # 引号
+        "标识符引号": {
+            "notes": "Oracle不区分大小写（除非用双引号），PostgreSQL小写存储",
+            "suggestion": "统一使用小写标识符或一致使用双引号"
+        },
+
+        # 别名
+        "列别名AS": {
+            "notes": "Oracle可省略AS，PostgreSQL建议显式使用AS"
+        },
+
+        # 删除
+        "DELETE无FROM": {
+            "target": "DELETE FROM",
+            "example": "DELETE t WHERE id=1 → DELETE FROM t WHERE id=1"
+        },
+    },
+
+    # PL/SQL到PL/pgSQL转换
+    "plsql_to_plpgsql": {
+        "过程声明": {
+            "oracle": "CREATE OR REPLACE PROCEDURE proc_name AS",
+            "postgresql": "CREATE OR REPLACE PROCEDURE proc_name() LANGUAGE plpgsql AS $$",
+        },
+        "函数声明": {
+            "oracle": "CREATE OR REPLACE FUNCTION func_name RETURN type AS",
+            "postgresql": "CREATE OR REPLACE FUNCTION func_name() RETURNS type LANGUAGE plpgsql AS $$",
+        },
+        "变量声明": {
+            "notes": "DECLARE块位置不同，PostgreSQL在$$和BEGIN之间"
+        },
+        "游标FOR循环": {
+            "notes": "语法基本兼容"
+        },
+        "异常处理": {
+            "oracle": "EXCEPTION WHEN exception_name THEN",
+            "postgresql": "EXCEPTION WHEN exception_name THEN",
+            "notes": "异常名称不同，如NO_DATA_FOUND在PG中可能需要检查FOUND变量"
+        },
+        "动态SQL": {
+            "oracle": "EXECUTE IMMEDIATE sql_string",
+            "postgresql": "EXECUTE sql_string",
+        },
+        "包(PACKAGE)": {
+            "notes": "PostgreSQL无PACKAGE概念，改用SCHEMA组织函数或扩展"
+        },
+        "触发器": {
+            "notes": "语法差异较大，需单独转换"
+        },
+    },
+
+    # 系统表/视图映射
+    "system_objects": {
+        "DUAL": {"target": "无需FROM或FROM(SELECT 1)", "notes": "SELECT 1+1 无需FROM"},
+        "USER_TABLES": {"target": "information_schema.tables", "notes": "或pg_tables"},
+        "USER_TAB_COLUMNS": {"target": "information_schema.columns", "notes": "或pg_attribute"},
+        "USER_INDEXES": {"target": "pg_indexes", "notes": "系统视图"},
+        "USER_CONSTRAINTS": {"target": "information_schema.table_constraints", "notes": "约束信息"},
+        "USER_SEQUENCES": {"target": "information_schema.sequences", "notes": "序列信息"},
+        "ALL_*": {"target": "information_schema.*或pg_catalog.*", "notes": "全部对象"},
+        "DBA_*": {"target": "pg_catalog.*", "notes": "需超级用户"},
+        "V$SESSION": {"target": "pg_stat_activity", "notes": "会话信息"},
+        "V$SQL": {"target": "pg_stat_statements", "notes": "需扩展"},
+        "V$LOCK": {"target": "pg_locks", "notes": "锁信息"},
+    },
+}
+
+
+# =============================================================================
+# Oracle to GaussDB Specific Rules (GaussDB专用规则)
+# =============================================================================
 ORACLE_TO_GAUSSDB_RULES = {
     "description": "Oracle to GaussDB (openGauss) Migration Rules",
     "version": "1.0",
@@ -248,6 +556,9 @@ def get_migration_rules(source_db: str, target_db: str) -> dict:
     if source_db == "oracle" and target_db == "gaussdb":
         return ORACLE_TO_GAUSSDB_RULES
 
+    if source_db == "oracle" and target_db == "postgresql":
+        return ORACLE_TO_POSTGRESQL_RULES
+
     # 返回通用规则（其他迁移路径可后续扩展）
     return {
         "description": f"{source_db} to {target_db} migration",
@@ -258,6 +569,20 @@ def get_migration_rules(source_db: str, target_db: str) -> dict:
         "sql_syntax": {},
         "plsql": {},
         "rewrite_rules": [],
+    }
+
+
+def get_combined_oracle_to_gaussdb_rules() -> dict:
+    """
+    Get combined Oracle to GaussDB rules (GaussDB specific + PostgreSQL generic)
+
+    Returns:
+        Combined rules dictionary with GaussDB specific rules taking precedence
+    """
+    return {
+        "gaussdb_specific": ORACLE_TO_GAUSSDB_RULES,
+        "postgresql_generic": ORACLE_TO_POSTGRESQL_RULES,
+        "notes": "GaussDB专用规则优先，核心规则之外的不兼容项参考PostgreSQL通用规则"
     }
 
 
