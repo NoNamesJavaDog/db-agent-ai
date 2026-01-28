@@ -193,7 +193,7 @@ ai_agent/
 - PostgreSQL 12+、MySQL 5.7/8.0 或 GaussDB（集中式/分布式）
 - 至少一个 LLM API Key（DeepSeek / OpenAI / Claude 等）
 
-> **GaussDB 用户注意：** GaussDB 需要使用专用的 psycopg2 驱动（不是标准 PostgreSQL psycopg2）。详见 [GaussDB 配置](#gaussdb华为) 章节。
+> **GaussDB 用户注意：** Windows 环境下可直接使用标准 PostgreSQL psycopg2 驱动；Linux（欧拉系统）需使用华为提供的专用驱动。详见 [GaussDB 配置](#gaussdb华为) 章节。
 
 ### 方式一：直接安装
 
@@ -524,11 +524,14 @@ user = gaussdb       # 用户名
 password = secret    # 密码
 ```
 
-> **重要：GaussDB 驱动安装说明**
+> **GaussDB 驱动安装说明**
 >
-> GaussDB 需要使用**专用的 psycopg2 驱动**，标准 PostgreSQL psycopg2 无法连接。
+> **Windows 环境：** 直接使用标准 PostgreSQL psycopg2 驱动（已包含在 requirements.txt 中）：
+> ```bash
+> pip install psycopg2-binary
+> ```
 >
-> **安装步骤：**
+> **Linux（欧拉系统）：** 需要使用华为提供的专用驱动：
 > ```bash
 > # 1. 解压驱动包（由华为提供）
 > tar -zxvf GaussDB-Kernel-V500R002C10-EULER-64bit-Python.tar.gz
