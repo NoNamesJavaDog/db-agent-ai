@@ -82,6 +82,8 @@ class AgentCLI:
         # 斜杠命令列表 (用于自动补全)
         self.slash_commands = [
             ("/help", "cmd_help"),
+            ("/file", "cmd_file"),
+            ("/migrate", "cmd_migrate"),
             ("/model", "cmd_model"),
             ("/language", "cmd_language"),
             ("/reset", "cmd_reset"),
@@ -111,6 +113,10 @@ class AgentCLI:
             "quit": self.exit_cli,
             "/quit": self.exit_cli
         }
+
+        # 当前加载的文件内容
+        self._loaded_file_content = None
+        self._loaded_file_path = None
 
         # 设置prompt_toolkit自动补全
         if PROMPT_TOOLKIT_AVAILABLE:
@@ -174,6 +180,8 @@ class AgentCLI:
         help_table.add_column("", style="white")
 
         help_table.add_row("/help", t("cmd_help"))
+        help_table.add_row("/file [path]", t("cmd_file"))
+        help_table.add_row("/migrate", t("cmd_migrate"))
         help_table.add_row("/model", t("cmd_model"))
         help_table.add_row("/language", t("cmd_language"))
         help_table.add_row("/reset", t("cmd_reset"))
@@ -365,6 +373,276 @@ class AgentCLI:
                     console.print(f"[magenta bold]Agent:[/] {content[:200]}{'...' if len(content) > 200 else ''}")
             console.print()
 
+    def load_file(self, file_path: str = None) -> bool:
+        """
+        加载SQL文件
+
+        Args:
+            file_path: 文件路径，如果为None则提示用户输入
+
+        Returns:
+            是否成功加载
+        """
+        console.print()
+
+        # 如果没有提供路径，提示用户输入
+        if not file_path:
+            file_path = Prompt.ask(
+                f"[cyan]{t('file_input_path')}[/]",
+                default=""
+            )
+
+        if not file_path:
+            console.print(f"[dim]{t('cancelled')}[/]")
+            return False
+
+        # 处理路径（支持引号包裹的路径）
+        file_path = file_path.strip().strip('"').strip("'")
+
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            console.print(f"[red]{t('error')}:[/] {t('file_not_found', path=file_path)}")
+            return False
+
+        # 检查文件扩展名
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext not in ['.sql', '.txt', '']:
+            console.print(f"[yellow]{t('file_type_warning', ext=ext)}[/]")
+
+        # 读取文件
+        try:
+            # 尝试多种编码
+            content = None
+            encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb2312', 'latin-1']
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        content = f.read()
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+            if content is None:
+                console.print(f"[red]{t('error')}:[/] {t('file_encoding_error')}")
+                return False
+
+            # 检查文件大小
+            file_size = len(content)
+            if file_size > 100000:  # 100KB
+                console.print(f"[yellow]{t('file_size_warning', size=file_size // 1024)}[/]")
+                if not Confirm.ask(f"[yellow]{t('file_continue_large')}[/]", default=False):
+                    console.print(f"[dim]{t('cancelled')}[/]")
+                    return False
+
+            # 保存内容
+            self._loaded_file_content = content
+            self._loaded_file_path = file_path
+
+            # 统计SQL语句数量
+            sql_count = self._count_sql_statements(content)
+
+            console.print(f"[green]{SYM_CHECK()}[/] {t('file_loaded', path=os.path.basename(file_path), size=file_size, sql_count=sql_count)}")
+            console.print()
+
+            # 显示文件预览
+            preview_lines = content.split('\n')[:20]
+            preview_text = '\n'.join(preview_lines)
+            if len(preview_lines) < len(content.split('\n')):
+                preview_text += f"\n... ({t('file_more_lines', count=len(content.split(chr(10))) - 20)})"
+
+            console.print(Panel(
+                Syntax(preview_text, "sql", theme="monokai", word_wrap=True, line_numbers=True),
+                title=f"[bold cyan]{t('file_preview')} - {os.path.basename(file_path)}[/]",
+                border_style="cyan",
+                box=box.ROUNDED
+            ))
+
+            console.print()
+            console.print(f"[dim]{t('file_usage_hint')}[/]")
+            console.print()
+
+            return True
+
+        except Exception as e:
+            console.print(f"[red]{t('error')}:[/] {t('file_read_error', error=str(e))}")
+            return False
+
+    def _count_sql_statements(self, content: str) -> int:
+        """统计SQL语句数量（简单计算分号）"""
+        # 移除注释
+        lines = content.split('\n')
+        clean_lines = []
+        in_block_comment = False
+        for line in lines:
+            if '/*' in line:
+                in_block_comment = True
+            if '*/' in line:
+                in_block_comment = False
+                continue
+            if in_block_comment:
+                continue
+            if line.strip().startswith('--'):
+                continue
+            clean_lines.append(line)
+
+        clean_content = '\n'.join(clean_lines)
+        # 计算分号数量
+        return clean_content.count(';')
+
+    def get_file_context(self) -> str:
+        """获取当前加载的文件内容作为上下文"""
+        if self._loaded_file_content:
+            return f"\n\n---\n{t('file_context_header', path=self._loaded_file_path)}:\n```sql\n{self._loaded_file_content}\n```\n---\n"
+        return ""
+
+    def clear_loaded_file(self):
+        """清除已加载的文件"""
+        self._loaded_file_content = None
+        self._loaded_file_path = None
+
+    def migrate_wizard(self) -> str:
+        """
+        数据库迁移向导
+
+        Returns:
+            生成的迁移指令消息，如果取消则返回None
+        """
+        console.print()
+
+        # 获取当前连接的数据库类型
+        db_info = self.agent.db_tools.get_db_info()
+        target_db = db_info.get("type", "postgresql")
+        target_db_display = {
+            "postgresql": "PostgreSQL",
+            "mysql": "MySQL",
+            "gaussdb": "GaussDB",
+            "oracle": "Oracle"
+        }.get(target_db, target_db.upper())
+
+        console.print(f"[cyan]{t('migrate_target_db')}:[/] [green]{target_db_display}[/]")
+        console.print()
+
+        # 源数据库选择
+        source_dbs = [
+            ("oracle", "Oracle"),
+            ("mysql", "MySQL"),
+            ("postgresql", "PostgreSQL"),
+            ("sqlserver", "SQL Server"),
+            ("db2", "IBM DB2"),
+            ("other", t("migrate_other"))
+        ]
+
+        # 过滤掉当前数据库
+        source_dbs = [(k, v) for k, v in source_dbs if k != target_db]
+
+        table = Table(box=box.ROUNDED, padding=(0, 2))
+        table.add_column("#", style="cyan", justify="center", width=3)
+        table.add_column(t("migrate_source_db"), style="white")
+
+        for i, (key, name) in enumerate(source_dbs, 1):
+            table.add_row(str(i), name)
+
+        console.print(Panel(
+            table,
+            title=f"[bold cyan]{t('migrate_select_source')}[/]",
+            border_style="cyan",
+            box=box.ROUNDED
+        ))
+
+        console.print()
+        choice = Prompt.ask(
+            f"[cyan]{t('migrate_enter_number')}[/]",
+            default=""
+        )
+
+        if not choice:
+            console.print(f"[dim]{t('cancelled')}[/]")
+            return None
+
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(source_dbs):
+                source_db_key, source_db_name = source_dbs[idx]
+            else:
+                console.print(f"[red]{t('invalid_choice')}[/]")
+                return None
+        except ValueError:
+            console.print(f"[red]{t('enter_valid_number')}[/]")
+            return None
+
+        # 如果选择"其他"，提示输入
+        if source_db_key == "other":
+            source_db_name = Prompt.ask(
+                f"[cyan]{t('migrate_enter_source_name')}[/]",
+                default=""
+            )
+            if not source_db_name:
+                console.print(f"[dim]{t('cancelled')}[/]")
+                return None
+
+        console.print()
+        console.print(f"[green]{SYM_CHECK()}[/] {t('migrate_source_selected', source=source_db_name)}")
+        console.print()
+
+        # 加载SQL文件
+        file_path = Prompt.ask(
+            f"[cyan]{t('file_input_path')}[/]",
+            default=""
+        )
+
+        if not file_path:
+            console.print(f"[dim]{t('cancelled')}[/]")
+            return None
+
+        # 使用load_file方法加载
+        if not self.load_file(file_path):
+            return None
+
+        # 选择迁移模式
+        console.print()
+        console.print(f"[cyan]{t('migrate_mode_select')}:[/]")
+        console.print(f"  [white]1.[/] {t('migrate_mode_convert_only')}")
+        console.print(f"  [white]2.[/] {t('migrate_mode_convert_execute')}")
+        console.print()
+
+        mode_choice = Prompt.ask(
+            f"[cyan]{t('migrate_enter_mode')}[/]",
+            default="1"
+        )
+
+        if mode_choice == "2":
+            execute_mode = True
+            mode_text = t("migrate_will_execute")
+        else:
+            execute_mode = False
+            mode_text = t("migrate_convert_only")
+
+        console.print(f"[green]{SYM_CHECK()}[/] {mode_text}")
+        console.print()
+
+        # 构建迁移指令 - 针对Oracle到GaussDB使用专用指令
+        is_oracle_to_gaussdb = (source_db_key == "oracle" and target_db in ["gaussdb"])
+
+        if is_oracle_to_gaussdb:
+            # 使用专门优化的Oracle→GaussDB迁移指令
+            if execute_mode:
+                migrate_instruction = t("migrate_instruction_oracle_to_gaussdb_execute")
+            else:
+                migrate_instruction = t("migrate_instruction_oracle_to_gaussdb_convert")
+            console.print(f"[cyan]{t('migrate_using_optimized_rules')}[/]")
+        else:
+            # 使用通用迁移指令
+            if execute_mode:
+                migrate_instruction = t("migrate_instruction_execute",
+                                       source=source_db_name,
+                                       target=target_db_display)
+            else:
+                migrate_instruction = t("migrate_instruction_convert",
+                                       source=source_db_name,
+                                       target=target_db_display)
+
+        return migrate_instruction
+
     def exit_cli(self):
         """退出CLI"""
         console.print()
@@ -502,6 +780,31 @@ class AgentCLI:
                 if user_input.lower() in self.commands:
                     self.commands[user_input.lower()]()
                     continue
+
+                # 处理 /file 命令 (带参数)
+                if user_input.lower().startswith('/file'):
+                    parts = user_input.split(maxsplit=1)
+                    file_path = parts[1].strip() if len(parts) > 1 else None
+                    self.load_file(file_path)
+                    continue
+
+                # 处理 /migrate 命令 - 数据库迁移向导
+                if user_input.lower() == '/migrate':
+                    migrate_instruction = self.migrate_wizard()
+                    if migrate_instruction and self._loaded_file_content:
+                        # 自动发送迁移指令
+                        user_input = migrate_instruction
+                        # 继续执行，不要continue
+                    else:
+                        continue
+
+                # 如果有加载的文件，将文件内容作为上下文添加到消息中
+                if self._loaded_file_content and not user_input.startswith('/'):
+                    # 检查用户是否想要处理文件内容
+                    file_context = self.get_file_context()
+                    user_input = user_input + file_context
+                    # 使用后清除（可选：也可以保持文件内容直到用户主动清除）
+                    # self.clear_loaded_file()
 
                 # 发送给Agent
                 console.print()

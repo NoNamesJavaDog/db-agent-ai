@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
+[![Oracle](https://img.shields.io/badge/Oracle-12c+-F80000.svg)](https://www.oracle.com/database/)
 [![GaussDB](https://img.shields.io/badge/GaussDB-Centralized%20%7C%20Distributed-red.svg)](https://www.huaweicloud.com/product/gaussdb.html)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -39,6 +40,7 @@
 | Consult docs for complex queries | Generate optimized SQL with one sentence |
 | Need to know table structures | AI explores database schema automatically |
 | Index optimization requires experience | Smart recommendations for best index strategies |
+| Manual DDL conversion for migration | AI converts DDL across heterogeneous databases |
 | 24/7 on-call required | AI never gets tired, always responsive |
 
 ### Core Advantages
@@ -140,6 +142,7 @@ Agent: Health Report:
 |                +-------------+                              |
 |                | PostgreSQL  |                              |
 |                |    MySQL    |                              |
+|                |   Oracle    |                              |
 |                |   GaussDB   |                              |
 |                +-------------+                              |
 +-------------------------------------------------------------+
@@ -157,6 +160,7 @@ ai_agent/
 │   │       ├── base.py            # Base class (interface)
 │   │       ├── postgresql.py      # PostgreSQL implementation
 │   │       ├── mysql.py           # MySQL implementation
+│   │       ├── oracle.py          # Oracle implementation (12c+)
 │   │       ├── gaussdb.py         # GaussDB implementation (Centralized/Distributed)
 │   │       └── factory.py         # Database tools factory
 │   ├── llm/                       # LLM clients
@@ -191,10 +195,12 @@ ai_agent/
 ### Requirements
 
 - Python 3.8+
-- PostgreSQL 12+, MySQL 5.7/8.0, or GaussDB (Centralized/Distributed)
+- PostgreSQL 12+, MySQL 5.7/8.0, Oracle 12c+, or GaussDB (Centralized/Distributed)
 - At least one LLM API Key (DeepSeek / OpenAI / Claude / etc.)
 
 > **Note for GaussDB users:** GaussDB uses pg8000 driver which supports sha256 authentication. On Linux (EulerOS), you can also use the dedicated driver from Huawei. See [GaussDB Configuration](#gaussdb-huawei) for details.
+
+> **Note for Oracle users:** Uses `oracledb` Thin mode (Oracle's official Python driver) - no Oracle Client installation required. Supports Oracle 12c and above (12.1, 12.2, 18c, 19c, 21c, 23c). Oracle 11g is not supported.
 
 ### Option 1: Direct Installation
 
@@ -232,6 +238,7 @@ scripts\start.bat
 requirements.txt
 ├── pg8000           # PostgreSQL/GaussDB driver (sha256 auth support)
 ├── pymysql          # MySQL driver
+├── oracledb         # Oracle driver (Thin mode, no client required)
 ├── pydantic         # Data validation (>=2.10.0 for Python 3.13 support)
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
@@ -310,7 +317,7 @@ Edit `config/config.ini`:
 
 ```ini
 [database]
-type = postgresql    # postgresql, mysql, or gaussdb
+type = postgresql    # postgresql, mysql, oracle, or gaussdb
 host = localhost
 port = 5432          # 5432 for PostgreSQL/GaussDB, 3306 for MySQL
 database = your_database
@@ -371,12 +378,43 @@ De> list all tables
 | Command | Description |
 |---------|-------------|
 | `/help` | Show help information |
+| `/file [path]` | Load SQL file for analysis |
 | `/model` | Switch AI model |
 | `/language` | Switch language (EN/ZH) |
 | `/reset` | Reset conversation history |
 | `/history` | View conversation history |
 | `/clear` | Clear screen |
 | `/exit` | Exit program |
+
+### 5. SQL File Analysis
+
+You can load SQL files and let AI analyze or execute them:
+
+```
+De> /file C:\queries\slow_queries.sql
+
+File loaded: slow_queries.sql (2048 bytes, ~5 SQL statements)
+
++------------------------------------------+
+| File Preview - slow_queries.sql          |
+|------------------------------------------|
+| 1  SELECT * FROM users                   |
+| 2  WHERE created_at > '2024-01-01'       |
+| 3  ORDER BY id;                          |
+| ...                                      |
++------------------------------------------+
+
+File loaded. Enter your question...
+
+De> Analyze the performance of these queries
+
+Agent: I'll analyze each query in the file...
+       [Shows analysis results]
+
+De> Execute the 2nd query
+
+Agent: [Shows SQL, awaits confirmation]
+```
 
 ---
 
@@ -544,6 +582,109 @@ Agent: Analyzing purchase regions for these top products...
     [AI remembers context, automatically analyzes these 10 products]
 ```
 
+### Case 7: Heterogeneous Database Migration
+
+**Scenario: Migrate Oracle objects to GaussDB**
+
+Use the `/file` command to load Oracle DDL scripts and let AI convert them to the target database syntax.
+
+```
+# Connect to GaussDB
+[database]
+type = gaussdb
+...
+
+# In CLI, load Oracle DDL file
+De> /file C:\migration\oracle_schema.sql
+
+File loaded: oracle_schema.sql (15360 bytes, ~23 SQL statements)
+
++--------------------------------------------------+
+| File Preview - oracle_schema.sql                  |
+|--------------------------------------------------|
+| 1  -- Oracle DDL Script                          |
+| 2  CREATE TABLE employees (                       |
+| 3      emp_id NUMBER(10) PRIMARY KEY,            |
+| 4      emp_name VARCHAR2(100) NOT NULL,          |
+| 5      hire_date DATE DEFAULT SYSDATE,           |
+| 6      salary NUMBER(12,2),                      |
+| 7      dept_id NUMBER(10) REFERENCES departments |
+| 8  );                                            |
+| 9                                                |
+| 10 CREATE SEQUENCE emp_seq START WITH 1;         |
+| ...                                              |
++--------------------------------------------------+
+
+De> Convert these Oracle DDL statements to GaussDB syntax and execute them
+
+Agent: I'll analyze the Oracle DDL and convert to GaussDB-compatible syntax:
+
+    **Conversion Summary:**
+
+    | Oracle Syntax | GaussDB Equivalent |
+    |---------------|-------------------|
+    | NUMBER(10) | INTEGER |
+    | NUMBER(12,2) | DECIMAL(12,2) |
+    | VARCHAR2(100) | VARCHAR(100) |
+    | SYSDATE | CURRENT_DATE |
+    | CREATE SEQUENCE | CREATE SEQUENCE (compatible) |
+
+    **Converted DDL:**
+
+    ```sql
+    CREATE TABLE employees (
+        emp_id INTEGER PRIMARY KEY,
+        emp_name VARCHAR(100) NOT NULL,
+        hire_date DATE DEFAULT CURRENT_DATE,
+        salary DECIMAL(12,2),
+        dept_id INTEGER REFERENCES departments
+    );
+
+    CREATE SEQUENCE emp_seq START WITH 1;
+    ```
+
+    Ready to execute 23 converted statements. Confirm? [Yes/No]
+
+User: Yes
+
+Agent: Successfully created 23 objects:
+       - 15 tables
+       - 5 sequences
+       - 3 indexes
+
+       Migration completed!
+```
+
+**Supported Migration Paths:**
+- **Oracle → GaussDB** (Optimized support with built-in detailed conversion rules)
+- Oracle → PostgreSQL / MySQL
+- MySQL → PostgreSQL / GaussDB / Oracle
+- PostgreSQL → MySQL / GaussDB / Oracle
+- SQL Server → PostgreSQL / MySQL
+
+### Oracle → GaussDB Core Conversion Rules
+
+DB Agent has built-in detailed conversion rules for Oracle to GaussDB migration:
+
+| Category | Oracle | GaussDB | Notes |
+|----------|--------|---------|-------|
+| **Packages** | DBMS_LOB | DBE_LOB | CLOB2FILE not supported |
+| | DBMS_OUTPUT | DBE_OUTPUT | Interface changed from procedure to function |
+| | DBMS_RANDOM | DBE_RANDOM | SEED→SET_SEED, VALUE→GET_VALUE |
+| | UTL_RAW | DBE_RAW | Function names more explicit |
+| | DBMS_SQL | DBE_SQL | OPEN_CURSOR→REGISTER_CONTEXT |
+| **Data Types** | NUMBER(p,-s) | Not supported | Use manual ROUND/TRUNC |
+| | VARCHAR2(n CHAR) | VARCHAR2(n*4) | Only BYTE unit supported |
+| | DATE | TIMESTAMP(0) | Watch for precision loss |
+| **SQL Syntax** | ! = | != | No space allowed, otherwise ! = factorial |
+| | CONNECT BY | WITH RECURSIVE | Rewrite complex hierarchies |
+| | ROWNUM | ROW_NUMBER() | Avoid in JOIN ON clause |
+| **Functions** | ROUND(NULL,...) | Throws error | Oracle returns NULL |
+| | '.' (regex) | Matches newline | Oracle doesn't match newline by default |
+| | LOWER/UPPER(date) | Format differs | Use TO_CHAR first |
+
+```
+
 ---
 
 ## Configuration
@@ -571,6 +712,41 @@ database = mydb      # Database name
 user = root          # Username
 password = secret    # Password
 ```
+
+**Oracle:**
+```ini
+[database]
+type = oracle        # Database type
+host = localhost     # Database host
+port = 1521          # Oracle default port
+database = ORCL      # Service Name or SID
+user = system        # Username
+password = oracle    # Password
+```
+
+> **Oracle Driver Notes**
+>
+> Uses `oracledb` Thin mode (Oracle's official Python driver):
+> ```bash
+> pip install oracledb
+> ```
+>
+> **Features:**
+> - Pure Python implementation - no Oracle Client installation required
+> - Supports Oracle 12c and above (12.1, 12.2, 18c, 19c, 21c, 23c)
+> - Oracle 11g is NOT supported (requires Oracle Client)
+>
+> **Supported Features:**
+> - Full table listing and schema exploration
+> - Slow query analysis via V$SQL
+> - Execution plan analysis via DBMS_XPLAN
+> - Index usage analysis
+> - Online index creation (ONLINE keyword)
+> - Statistics gathering via DBMS_STATS
+>
+> **Permission Notes:**
+> - For full functionality, DBA privileges are recommended
+> - Without DBA privileges, the tool falls back to ALL_* views instead of DBA_* views
 
 **GaussDB (Huawei):**
 ```ini
@@ -827,7 +1003,7 @@ Agent: Successfully inserted 95 new records (5 duplicates skipped).
 ## FAQ
 
 ### Q: Which databases are supported?
-**A:** Currently supports PostgreSQL 12+, MySQL 5.7/8.0, and GaussDB (both Centralized and Distributed modes). SQL Server support is under development.
+**A:** Currently supports PostgreSQL 12+, MySQL 5.7/8.0, Oracle 12c+, and GaussDB (both Centralized and Distributed modes). SQL Server support is under development.
 
 ### Q: Will it accidentally delete data?
 **A:** No. All INSERT/UPDATE/DELETE/DROP operations require confirmation. You can preview the SQL before deciding to execute.

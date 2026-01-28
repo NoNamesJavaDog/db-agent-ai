@@ -7,6 +7,7 @@ import logging
 from db_agent.llm import BaseLLMClient
 from db_agent.i18n import i18n, t
 from .database import DatabaseToolsFactory
+from .migration_rules import get_migration_rules, format_rules_for_prompt, ORACLE_TO_GAUSSDB_RULES
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,8 @@ class SQLTuningAgent:
             db_type_name = f"GaussDB{mode_info}"
         elif db_type == "mysql":
             db_type_name = "MySQL"
+        elif db_type == "oracle":
+            db_type_name = "Oracle"
         else:
             db_type_name = "PostgreSQL"
 
@@ -98,7 +101,13 @@ GaussDB (Distributed) specific notes:
 - Use PGXC_LOCKS to check distributed lock information
 - Use EXPLAIN ANALYZE to analyze execution plans
 - Consider data distribution and skew issues in distributed mode
-- Check pgxc_node table for cluster node information"""
+- Check pgxc_node table for cluster node information
+
+**Oracle to GaussDB Core Migration Rules:**
+- Packages: DBMS_LOB→DBE_LOB, DBMS_OUTPUT→DBE_OUTPUT, DBMS_RANDOM→DBE_RANDOM, UTL_RAW→DBE_RAW, DBMS_SQL→DBE_SQL
+- Data Types: NUMBER negative scale not supported; VARCHAR2 CHAR unit not supported; DATE→TIMESTAMP(0)
+- SQL: != must not have space; CONNECT BY→WITH RECURSIVE; ROWNUM avoid in JOIN ON
+- Functions: ROUND(NULL) errors; '.' in REGEXP matches newline; use TO_CHAR before LOWER/UPPER on dates"""
                 db_specific_notes_zh = """
 GaussDB (分布式) 特定说明:
 - 华为自研数据库，兼容 PostgreSQL 语法
@@ -108,7 +117,13 @@ GaussDB (分布式) 特定说明:
 - 使用 PGXC_LOCKS 检查分布式锁信息
 - 使用 EXPLAIN ANALYZE 分析执行计划
 - 分布式模式注意数据分布和倾斜问题
-- 查看 pgxc_node 表获取集群节点信息"""
+- 查看 pgxc_node 表获取集群节点信息
+
+**Oracle迁移到GaussDB核心规则：**
+- 高级包：DBMS_LOB→DBE_LOB, DBMS_OUTPUT→DBE_OUTPUT, DBMS_RANDOM→DBE_RANDOM, UTL_RAW→DBE_RAW, DBMS_SQL→DBE_SQL
+- 数据类型：NUMBER负数标度不支持；VARCHAR2 CHAR单位不支持；DATE→TIMESTAMP(0)
+- SQL语法：!=不能有空格；CONNECT BY改用WITH RECURSIVE；ROWNUM避免在JOIN ON中使用
+- 函数：ROUND(NULL)会报错；REGEXP中'.'默认匹配换行；日期用LOWER/UPPER前先TO_CHAR"""
             else:
                 db_specific_notes_en = """
 GaussDB (Centralized) specific notes:
@@ -118,7 +133,38 @@ GaussDB (Centralized) specific notes:
 - Use PG_THREAD_WAIT_STATUS for thread wait status
 - Use PG_LOCKS to check lock information
 - Use EXPLAIN ANALYZE to analyze execution plans
-- CREATE INDEX CONCURRENTLY avoids table locks"""
+- CREATE INDEX CONCURRENTLY avoids table locks
+
+**Oracle to GaussDB Core Migration Rules:**
+
+1. Package Replacements (MUST change):
+   - DBMS_LOB → DBE_LOB (CLOB2FILE not supported)
+   - DBMS_OUTPUT → DBE_OUTPUT
+   - DBMS_RANDOM → DBE_RANDOM (SEED→SET_SEED, VALUE→GET_VALUE)
+   - UTL_RAW → DBE_RAW (CAST_FROM_NUMBER→CAST_FROM_NUMBER_TO_RAW)
+   - DBMS_SQL → DBE_SQL (OPEN_CURSOR→REGISTER_CONTEXT)
+
+2. Data Type Differences:
+   - NUMBER(p,-s): Negative scale not supported, use ROUND/TRUNC manually
+   - VARCHAR2(n CHAR): Only BYTE unit supported, change to VARCHAR2(n*4)
+   - DATE: Internally converted to TIMESTAMP(0), watch for precision loss
+   - CLOB/BLOB: Oracle's "locator" concept not supported
+
+3. SQL Syntax Key Differences:
+   - != operator: Must NOT have space like "! =" (space makes ! factorial)
+   - CONNECT BY: Only CONNECT_BY_FILTERING mode, use WITH RECURSIVE for complex hierarchies
+   - ROWNUM: Avoid in JOIN ON clause, use in outer WHERE or ROW_NUMBER()
+
+4. Function Differences:
+   - ROUND(NULL,...) throws error in GaussDB
+   - CHR(0) or CHR(256) truncates at \\0
+   - '.' in REGEXP_REPLACE matches newline by default (Oracle doesn't)
+   - LOWER/UPPER implicit date conversion format differs, use TO_CHAR first
+
+5. PL/SQL Differences:
+   - %TYPE doesn't support record variable attribute references
+   - FOR...REVERSE requires lower_bound >= upper_bound
+   - Collection comparison is order-strict (Oracle ignores order)"""
                 db_specific_notes_zh = """
 GaussDB (集中式) 特定说明:
 - 华为自研数据库，兼容 PostgreSQL 语法
@@ -127,7 +173,38 @@ GaussDB (集中式) 特定说明:
 - 使用 PG_THREAD_WAIT_STATUS 查看线程等待状态
 - 使用 PG_LOCKS 检查锁信息
 - 使用 EXPLAIN ANALYZE 分析执行计划
-- CREATE INDEX CONCURRENTLY 可以避免锁表"""
+- CREATE INDEX CONCURRENTLY 可以避免锁表
+
+**Oracle迁移到GaussDB核心规则：**
+
+1. 高级包替换（必须改）：
+   - DBMS_LOB → DBE_LOB（不支持CLOB2FILE）
+   - DBMS_OUTPUT → DBE_OUTPUT
+   - DBMS_RANDOM → DBE_RANDOM（SEED→SET_SEED, VALUE→GET_VALUE）
+   - UTL_RAW → DBE_RAW（CAST_FROM_NUMBER→CAST_FROM_NUMBER_TO_RAW）
+   - DBMS_SQL → DBE_SQL（OPEN_CURSOR→REGISTER_CONTEXT）
+
+2. 数据类型差异：
+   - NUMBER(p,-s)：GaussDB不支持负数标度，需手动ROUND/TRUNC
+   - VARCHAR2(n CHAR)：GaussDB仅支持BYTE，改为VARCHAR2(n*4)
+   - DATE：GaussDB内部转为TIMESTAMP(0)，注意精度
+   - CLOB/BLOB：不支持Oracle的"定位器"概念
+
+3. SQL语法关键差异：
+   - != 运算符：禁止写成 "! ="（有空格会被识别为阶乘）
+   - CONNECT BY：仅支持CONNECT_BY_FILTERING，复杂层次查询改用WITH RECURSIVE
+   - ROWNUM：避免在JOIN ON中使用，改在外层WHERE或用ROW_NUMBER()
+
+4. 函数差异：
+   - ROUND(NULL,...)在GaussDB会报错
+   - CHR(0)或CHR(256)会在\\0处截断
+   - REGEXP_REPLACE中'.'默认匹配换行符（Oracle不匹配）
+   - LOWER/UPPER对日期的隐式转换格式不同，建议先TO_CHAR
+
+5. PL/SQL差异：
+   - %TYPE不支持record变量属性引用
+   - FOR...REVERSE要求lower_bound >= upper_bound
+   - 集合比较严格按顺序，不像Oracle忽略顺序"""
         elif db_type == "mysql":
             db_specific_notes_en = """
 MySQL-specific notes:
@@ -143,6 +220,28 @@ MySQL特定说明:
 - MySQL 5.6+支持在线DDL(ALGORITHM=INPLACE)创建索引
 - 需要启用performance_schema才能进行详细的慢查询分析
 - 使用SHOW CREATE TABLE查看完整的表定义"""
+        elif db_type == "oracle":
+            db_type_name = "Oracle"
+            db_specific_notes_en = """
+Oracle-specific notes:
+- Uses oracledb Thin mode driver (no Oracle Client required)
+- Supports Oracle 12c and above (12.1, 12.2, 18c, 19c, 21c, 23c)
+- Use DBMS_XPLAN.DISPLAY for execution plan analysis
+- Use V$SQL and V$SESSION for performance monitoring
+- CREATE INDEX ONLINE avoids table locks
+- Use DBMS_STATS.GATHER_TABLE_STATS to update statistics
+- FETCH FIRST n ROWS ONLY for pagination (12c+)
+- DBA_* views require DBA privileges, falls back to ALL_* views"""
+            db_specific_notes_zh = """
+Oracle特定说明:
+- 使用oracledb Thin模式驱动（无需安装Oracle客户端）
+- 支持Oracle 12c及以上版本（12.1、12.2、18c、19c、21c、23c）
+- 使用DBMS_XPLAN.DISPLAY分析执行计划
+- 使用V$SQL和V$SESSION进行性能监控
+- CREATE INDEX ONLINE可以避免锁表
+- 使用DBMS_STATS.GATHER_TABLE_STATS更新统计信息
+- FETCH FIRST n ROWS ONLY用于分页（12c+）
+- DBA_*视图需要DBA权限，无权限时降级使用ALL_*视图"""
         else:
             db_specific_notes_en = """
 PostgreSQL-specific notes:
@@ -220,6 +319,55 @@ When communicating with users:
 - Proactively display operation results
 - If uncertain, ask the user first
 
+**Heterogeneous Database Migration Capability:**
+When users upload SQL files from other database types (Oracle, MySQL, SQL Server, etc.) and ask to convert/migrate to the current database:
+
+1. **Identify source database** - Analyze SQL syntax to detect the source database type
+2. **Convert DDL syntax** - Transform data types, functions, and syntax to target database format
+3. **Handle object dependencies** - Create objects in correct order (tables before indexes, etc.)
+4. **Provide conversion summary** - Show a mapping table of converted syntax
+
+Common syntax mappings (Source → Target {db_type_name}):
+
+**Oracle → PostgreSQL/GaussDB:**
+| Oracle | PostgreSQL/GaussDB |
+|--------|-------------------|
+| NUMBER(n) | INTEGER / BIGINT |
+| NUMBER(p,s) | DECIMAL(p,s) / NUMERIC(p,s) |
+| VARCHAR2(n) | VARCHAR(n) |
+| CLOB | TEXT |
+| BLOB | BYTEA |
+| DATE | TIMESTAMP |
+| SYSDATE | CURRENT_TIMESTAMP |
+| NVL(a,b) | COALESCE(a,b) |
+| DECODE() | CASE WHEN |
+| ROWNUM | LIMIT / ROW_NUMBER() |
+| || (concat) | || (same) |
+| SEQUENCE.NEXTVAL | nextval('sequence') |
+
+**MySQL → PostgreSQL/GaussDB:**
+| MySQL | PostgreSQL/GaussDB |
+|-------|-------------------|
+| INT AUTO_INCREMENT | SERIAL / GENERATED ALWAYS AS IDENTITY |
+| TINYINT | SMALLINT |
+| DATETIME | TIMESTAMP |
+| LONGTEXT | TEXT |
+| ENUM() | VARCHAR + CHECK |
+| IFNULL(a,b) | COALESCE(a,b) |
+| NOW() | CURRENT_TIMESTAMP |
+| LIMIT n,m | LIMIT m OFFSET n |
+| ` (backtick) | " (double quote) |
+
+**Oracle/PostgreSQL → MySQL:**
+| Oracle/PostgreSQL | MySQL |
+|-------------------|-------|
+| SERIAL | INT AUTO_INCREMENT |
+| TEXT | LONGTEXT |
+| BOOLEAN | TINYINT(1) |
+| BYTEA | LONGBLOB |
+| CURRENT_TIMESTAMP | NOW() |
+| " (double quote) | ` (backtick) |
+
 Remember: You are the user's database assistant, helping them directly operate the database! Be resilient and complete the task even when facing minor errors."""
         else:
             self.system_prompt = f"""你是一个{db_type_name}数据库管理专家AI Agent。
@@ -283,6 +431,55 @@ Remember: You are the user's database assistant, helping them directly operate t
 - 使用清晰的中文解释
 - 主动展示操作结果
 - 如果不确定,先询问用户
+
+**异构数据库迁移能力:**
+当用户上传其他数据库类型的SQL文件（Oracle、MySQL、SQL Server等）并要求转换/迁移到当前数据库时：
+
+1. **识别源数据库** - 分析SQL语法检测源数据库类型
+2. **转换DDL语法** - 将数据类型、函数、语法转换为目标数据库格式
+3. **处理对象依赖** - 按正确顺序创建对象（先表后索引等）
+4. **提供转换摘要** - 显示已转换语法的映射表
+
+常见语法映射（源数据库 → 目标 {db_type_name}）：
+
+**Oracle → PostgreSQL/GaussDB:**
+| Oracle | PostgreSQL/GaussDB |
+|--------|-------------------|
+| NUMBER(n) | INTEGER / BIGINT |
+| NUMBER(p,s) | DECIMAL(p,s) / NUMERIC(p,s) |
+| VARCHAR2(n) | VARCHAR(n) |
+| CLOB | TEXT |
+| BLOB | BYTEA |
+| DATE | TIMESTAMP |
+| SYSDATE | CURRENT_TIMESTAMP |
+| NVL(a,b) | COALESCE(a,b) |
+| DECODE() | CASE WHEN |
+| ROWNUM | LIMIT / ROW_NUMBER() |
+| || (连接符) | || (相同) |
+| SEQUENCE.NEXTVAL | nextval('sequence') |
+
+**MySQL → PostgreSQL/GaussDB:**
+| MySQL | PostgreSQL/GaussDB |
+|-------|-------------------|
+| INT AUTO_INCREMENT | SERIAL / GENERATED ALWAYS AS IDENTITY |
+| TINYINT | SMALLINT |
+| DATETIME | TIMESTAMP |
+| LONGTEXT | TEXT |
+| ENUM() | VARCHAR + CHECK |
+| IFNULL(a,b) | COALESCE(a,b) |
+| NOW() | CURRENT_TIMESTAMP |
+| LIMIT n,m | LIMIT m OFFSET n |
+| ` (反引号) | " (双引号) |
+
+**Oracle/PostgreSQL → MySQL:**
+| Oracle/PostgreSQL | MySQL |
+|-------------------|-------|
+| SERIAL | INT AUTO_INCREMENT |
+| TEXT | LONGTEXT |
+| BOOLEAN | TINYINT(1) |
+| BYTEA | LONGBLOB |
+| CURRENT_TIMESTAMP | NOW() |
+| " (双引号) | ` (反引号) |
 
 记住:你是用户的数据库助手,可以帮助他们直接操作数据库！遇到小错误时要有韧性，坚持完成任务！"""
 

@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
+[![Oracle](https://img.shields.io/badge/Oracle-12c+-F80000.svg)](https://www.oracle.com/database/)
 [![GaussDB](https://img.shields.io/badge/GaussDB-集中式%20%7C%20分布式-red.svg)](https://www.huaweicloud.com/product/gaussdb.html)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -39,6 +40,7 @@
 | 查阅文档编写复杂查询 | 一句话生成优化 SQL |
 | 需要了解表结构才能操作 | AI 自动探索数据库结构 |
 | 索引优化需要丰富经验 | 智能推荐最佳索引策略 |
+| 手动转换异构数据库 DDL | AI 自动转换并执行对象迁移 |
 | 7x24 小时待命 | AI 永不疲倦随时响应 |
 
 ### 核心优势
@@ -139,6 +141,7 @@
 │                   ┌─────────────┐                          │
 │                   │ PostgreSQL  │                          │
 │                   │   MySQL     │                          │
+│                   │   Oracle    │                          │
 │                   │   GaussDB   │                          │
 │                   └─────────────┘                          │
 └─────────────────────────────────────────────────────────────┘
@@ -156,6 +159,7 @@ ai_agent/
 │   │       ├── base.py            # 基类（接口定义）
 │   │       ├── postgresql.py      # PostgreSQL 实现
 │   │       ├── mysql.py           # MySQL 实现
+│   │       ├── oracle.py          # Oracle 实现（12c+）
 │   │       ├── gaussdb.py         # GaussDB 实现（集中式/分布式）
 │   │       └── factory.py         # 数据库工具工厂
 │   ├── llm/                       # LLM 客户端
@@ -190,10 +194,12 @@ ai_agent/
 ### 环境要求
 
 - Python 3.8+
-- PostgreSQL 12+、MySQL 5.7/8.0 或 GaussDB（集中式/分布式）
+- PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+ 或 GaussDB（集中式/分布式）
 - 至少一个 LLM API Key（DeepSeek / OpenAI / Claude 等）
 
 > **GaussDB 用户注意：** GaussDB 使用 pg8000 驱动（支持 sha256 认证）。Linux（欧拉系统）也可使用华为提供的专用驱动。详见 [GaussDB 配置](#gaussdb华为) 章节。
+
+> **Oracle 用户注意：** 使用 `oracledb` Thin 模式（Oracle 官方 Python 驱动）- 无需安装 Oracle Client。支持 Oracle 12c 及以上版本（12.1、12.2、18c、19c、21c、23c）。不支持 Oracle 11g。
 
 ### 方式一：直接安装
 
@@ -232,6 +238,7 @@ scripts\start.bat
 requirements.txt
 ├── pg8000           # PostgreSQL/GaussDB 驱动（支持 sha256 认证）
 ├── pymysql          # MySQL 驱动
+├── oracledb         # Oracle 驱动（Thin 模式，无需客户端）
 ├── pydantic         # 数据验证（>=2.10.0 支持 Python 3.13）
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
@@ -310,7 +317,7 @@ scripts\download_deps.bat      # Windows
 
 ```ini
 [database]
-type = postgresql    # postgresql、mysql 或 gaussdb
+type = postgresql    # postgresql、mysql、oracle 或 gaussdb
 host = localhost
 port = 5432          # PostgreSQL/GaussDB 默认 5432，MySQL 默认 3306
 database = your_database
@@ -371,12 +378,43 @@ De> 列出所有表
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示帮助信息 |
+| `/file [路径]` | 加载SQL文件进行分析 |
 | `/model` | 切换 AI 模型 |
 | `/language` | 切换语言（中/英） |
 | `/reset` | 重置对话历史 |
 | `/history` | 查看对话历史 |
 | `/clear` | 清屏 |
 | `/exit` | 退出程序 |
+
+### 5. SQL 文件分析
+
+您可以加载 SQL 文件，让 AI 分析或执行：
+
+```
+De> /file C:\queries\slow_queries.sql
+
+已加载文件: slow_queries.sql (2048 字节, 约 5 条SQL语句)
+
+╭──────────────────────────────────────────╮
+│ 文件预览 - slow_queries.sql               │
+├──────────────────────────────────────────┤
+│ 1  SELECT * FROM users                   │
+│ 2  WHERE created_at > '2024-01-01'       │
+│ 3  ORDER BY id;                          │
+│ ...                                      │
+╰──────────────────────────────────────────╯
+
+文件已加载，请输入您的问题...
+
+De> 分析这些查询的性能
+
+🤖: 我来分析文件中的每条查询...
+    [显示分析结果]
+
+De> 执行第2条查询
+
+🤖: [展示SQL，等待确认]
+```
 
 ---
 
@@ -544,6 +582,107 @@ De> 列出所有表
     [AI 记得上下文，自动分析这 10 个商品]
 ```
 
+### 场景七：异构数据库对象迁移
+
+**场景：将 Oracle 数据库对象迁移到 GaussDB**
+
+使用 `/file` 命令加载 Oracle DDL 脚本，让 AI 自动转换为目标数据库语法并执行。
+
+```
+# 已连接 GaussDB
+[database]
+type = gaussdb
+...
+
+# 在 CLI 中加载 Oracle DDL 文件
+De> /file C:\migration\oracle_schema.sql
+
+✓ 已加载文件: oracle_schema.sql (15360 字节, 约 23 条SQL语句)
+
+╭──────────────────────────────────────────────────╮
+│ 文件预览 - oracle_schema.sql                      │
+├──────────────────────────────────────────────────┤
+│ 1  -- Oracle DDL Script                          │
+│ 2  CREATE TABLE employees (                       │
+│ 3      emp_id NUMBER(10) PRIMARY KEY,            │
+│ 4      emp_name VARCHAR2(100) NOT NULL,          │
+│ 5      hire_date DATE DEFAULT SYSDATE,           │
+│ 6      salary NUMBER(12,2),                      │
+│ 7      dept_id NUMBER(10) REFERENCES departments │
+│ 8  );                                            │
+│ 9                                                │
+│ 10 CREATE SEQUENCE emp_seq START WITH 1;         │
+│ ...                                              │
+╰──────────────────────────────────────────────────╯
+
+De> 把这些 Oracle DDL 语句转换成 GaussDB 语法并执行
+
+🤖: 我来分析 Oracle DDL 并转换为 GaussDB 兼容语法：
+
+    **转换摘要：**
+
+    | Oracle 语法 | GaussDB 等效语法 |
+    |------------|-----------------|
+    | NUMBER(10) | INTEGER |
+    | NUMBER(12,2) | DECIMAL(12,2) |
+    | VARCHAR2(100) | VARCHAR(100) |
+    | SYSDATE | CURRENT_DATE |
+    | CREATE SEQUENCE | CREATE SEQUENCE (兼容) |
+
+    **转换后的 DDL：**
+
+    ```sql
+    CREATE TABLE employees (
+        emp_id INTEGER PRIMARY KEY,
+        emp_name VARCHAR(100) NOT NULL,
+        hire_date DATE DEFAULT CURRENT_DATE,
+        salary DECIMAL(12,2),
+        dept_id INTEGER REFERENCES departments
+    );
+
+    CREATE SEQUENCE emp_seq START WITH 1;
+    ```
+
+    准备执行 23 条转换后的语句，确认执行吗？[是/否]
+
+👤: 是
+
+🤖: 成功创建 23 个对象：
+    - 15 个表
+    - 5 个序列
+    - 3 个索引
+
+    迁移完成！
+```
+
+**支持的迁移路径：**
+- **Oracle → GaussDB**（优化支持，内置详细转换规则）
+- Oracle → PostgreSQL / MySQL
+- MySQL → PostgreSQL / GaussDB / Oracle
+- PostgreSQL → MySQL / GaussDB / Oracle
+- SQL Server → PostgreSQL / MySQL
+
+### Oracle → GaussDB 核心转换规则
+
+DB Agent 针对 Oracle 到 GaussDB 的迁移内置了详细的转换规则：
+
+| 类别 | Oracle | GaussDB | 说明 |
+|------|--------|---------|------|
+| **高级包** | DBMS_LOB | DBE_LOB | 不支持 CLOB2FILE |
+| | DBMS_OUTPUT | DBE_OUTPUT | 接口由存储过程变为函数 |
+| | DBMS_RANDOM | DBE_RANDOM | SEED→SET_SEED, VALUE→GET_VALUE |
+| | UTL_RAW | DBE_RAW | 函数名更明确 |
+| | DBMS_SQL | DBE_SQL | OPEN_CURSOR→REGISTER_CONTEXT |
+| **数据类型** | NUMBER(p,-s) | 不支持 | 需手动 ROUND/TRUNC |
+| | VARCHAR2(n CHAR) | VARCHAR2(n*4) | 仅支持 BYTE 单位 |
+| | DATE | TIMESTAMP(0) | 注意精度丢失 |
+| **SQL语法** | ! = | != | 禁止空格，否则 ! 被识别为阶乘 |
+| | CONNECT BY | WITH RECURSIVE | 复杂层次查询改写 |
+| | ROWNUM | ROW_NUMBER() | 避免在 JOIN ON 中使用 |
+| **函数** | ROUND(NULL,...) | 报错 | Oracle 返回 NULL |
+| | '.' (正则) | 匹配换行 | Oracle 默认不匹配换行 |
+| | LOWER/UPPER(日期) | 格式不同 | 建议先 TO_CHAR |
+
 ---
 
 ## ⚙️ 配置说明
@@ -571,6 +710,41 @@ database = mydb      # 数据库名
 user = root          # 用户名
 password = secret    # 密码
 ```
+
+**Oracle:**
+```ini
+[database]
+type = oracle        # 数据库类型
+host = localhost     # 数据库主机
+port = 1521          # Oracle 默认端口
+database = ORCL      # Service Name 或 SID
+user = system        # 用户名
+password = oracle    # 密码
+```
+
+> **Oracle 驱动说明**
+>
+> 使用 `oracledb` Thin 模式（Oracle 官方 Python 驱动）：
+> ```bash
+> pip install oracledb
+> ```
+>
+> **特性：**
+> - 纯 Python 实现 - 无需安装 Oracle Client
+> - 支持 Oracle 12c 及以上版本（12.1、12.2、18c、19c、21c、23c）
+> - 不支持 Oracle 11g（需要安装 Oracle Client）
+>
+> **支持的功能：**
+> - 完整的表列表和模式探索
+> - 通过 V$SQL 分析慢查询
+> - 通过 DBMS_XPLAN 分析执行计划
+> - 索引使用分析
+> - 在线索引创建（ONLINE 关键字）
+> - 通过 DBMS_STATS 收集统计信息
+>
+> **权限说明：**
+> - 建议使用 DBA 权限以获得完整功能
+> - 无 DBA 权限时，工具会自动降级使用 ALL_* 视图代替 DBA_* 视图
 
 **GaussDB（华为）:**
 ```ini
@@ -826,7 +1000,7 @@ Agent 自动检测数据库版本，生成兼容的 SQL：
 ## ❓ 常见问题
 
 ### Q: 支持哪些数据库？
-**A:** 目前支持 PostgreSQL 12+、MySQL 5.7/8.0 和 GaussDB（集中式和分布式模式）。SQL Server 等支持正在开发中。
+**A:** 目前支持 PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+ 和 GaussDB（集中式和分布式模式）。SQL Server 等支持正在开发中。
 
 ### Q: 会不会误操作删除数据？
 **A:** 不会。所有 INSERT/UPDATE/DELETE/DROP 等危险操作都需要二次确认，你可以预览将要执行的 SQL 后再决定是否执行。
