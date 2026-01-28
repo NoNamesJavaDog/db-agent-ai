@@ -142,6 +142,18 @@ TRANSLATIONS = {
         "api_session_not_found": "会话不存在: {session_id}",
         "api_session_deleted": "会话已删除",
         "api_session_reset": "会话已重置",
+
+        # LLM API 错误码
+        "llm_error_400": "请求格式错误，请检查请求参数",
+        "llm_error_401": "API Key 错误或认证失败，请检查您的 API Key 是否正确",
+        "llm_error_402": "账户余额不足，请前往充值",
+        "llm_error_422": "请求参数错误: {detail}",
+        "llm_error_429": "请求速率达到上限，请稍后重试",
+        "llm_error_500": "服务器内部故障，请稍后重试",
+        "llm_error_503": "服务器繁忙，请稍后重试",
+        "llm_error_unknown": "API 请求失败 (状态码 {code}): {message}",
+        "llm_error_connection": "无法连接到 API 服务器: {error}",
+        "llm_error_timeout": "API 请求超时，请稍后重试",
     },
 
     "en": {
@@ -280,6 +292,18 @@ TRANSLATIONS = {
         "api_session_not_found": "Session not found: {session_id}",
         "api_session_deleted": "Session deleted",
         "api_session_reset": "Session reset",
+
+        # LLM API Error Codes
+        "llm_error_400": "Bad request format, please check request parameters",
+        "llm_error_401": "API Key error or authentication failed, please check your API Key",
+        "llm_error_402": "Insufficient account balance, please recharge",
+        "llm_error_422": "Invalid request parameters: {detail}",
+        "llm_error_429": "Rate limit exceeded, please try again later",
+        "llm_error_500": "Server internal error, please try again later",
+        "llm_error_503": "Server is busy, please try again later",
+        "llm_error_unknown": "API request failed (status code {code}): {message}",
+        "llm_error_connection": "Cannot connect to API server: {error}",
+        "llm_error_timeout": "API request timeout, please try again later",
     }
 }
 

@@ -1,8 +1,12 @@
 """
 Google Gemini Client
 """
+import logging
 from typing import Dict, List, Any
 from .base import BaseLLMClient
+from db_agent.i18n import t
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiClient(BaseLLMClient):
@@ -27,14 +31,36 @@ class GeminiClient(BaseLLMClient):
                 "parts": [msg["content"]] if isinstance(msg["content"], str) else msg["content"]
             })
 
-        # Gemini 工具调用支持较复杂，这里简化处理
-        response = self.model.generate_content(gemini_messages)
+        try:
+            # Gemini 工具调用支持较复杂，这里简化处理
+            response = self.model.generate_content(gemini_messages)
 
-        return {
-            "finish_reason": "stop",
-            "content": response.text if response.text else "",
-            "tool_calls": None
-        }
+            return {
+                "finish_reason": "stop",
+                "content": response.text if response.text else "",
+                "tool_calls": None
+            }
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"Gemini API error: {error_str}")
+
+            # Parse common Gemini errors
+            if "API key" in error_str or "401" in error_str:
+                error_message = t("llm_error_401")
+            elif "quota" in error_str.lower() or "429" in error_str:
+                error_message = t("llm_error_429")
+            elif "500" in error_str:
+                error_message = t("llm_error_500")
+            elif "503" in error_str:
+                error_message = t("llm_error_503")
+            else:
+                error_message = t("llm_error_unknown", code="N/A", message=error_str)
+
+            return {
+                "finish_reason": "error",
+                "content": error_message,
+                "tool_calls": None
+            }
 
     def get_provider_name(self) -> str:
         return "Gemini"

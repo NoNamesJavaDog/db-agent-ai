@@ -774,6 +774,10 @@ Remember: You are the user's database assistant, helping them directly operate t
 
                 return text_response
 
+            elif finish_reason == "error":
+                # API 错误，直接返回错误消息
+                return content or t("agent_conversation_error", reason=finish_reason)
+
             else:
                 # 其他情况
                 return t("agent_conversation_error", reason=finish_reason)
