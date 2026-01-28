@@ -9,6 +9,43 @@ import logging
 # 完全禁用日志输出
 logging.disable(logging.CRITICAL)
 
+# Windows console encoding fix
+if sys.platform == 'win32':
+    try:
+        # Try to enable UTF-8 mode on Windows
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleOutputCP(65001)
+        kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+
+# Check if console supports Unicode
+def _supports_unicode():
+    """Check if the console supports Unicode output"""
+    if sys.platform != 'win32':
+        return True
+    try:
+        # Try to encode a Unicode character
+        '✓'.encode(sys.stdout.encoding or 'utf-8')
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+_UNICODE_SUPPORT = _supports_unicode()
+
+# Symbol mappings (Unicode -> ASCII fallback)
+def sym(unicode_char: str, ascii_fallback: str = '') -> str:
+    """Return Unicode symbol or ASCII fallback based on console support"""
+    if _UNICODE_SUPPORT:
+        return unicode_char
+    return ascii_fallback
+
+# Common symbols
+SYM_CHECK = lambda: sym('✓', '+')
+SYM_CROSS = lambda: sym('✗', 'x')
+SYM_BULLET = lambda: sym('●', '*')
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
@@ -243,7 +280,7 @@ class AgentCLI:
                 base_url=provider_config.get("base_url")
             )
             self.agent.switch_model(client)
-            console.print(f"[green]✓[/] {t('model_switched')} [cyan]{client.get_provider_name()}[/] - [green]{client.get_model_name()}[/]")
+            console.print(f"[green]{SYM_CHECK()}[/] {t('model_switched')} [cyan]{client.get_provider_name()}[/] - [green]{client.get_model_name()}[/]")
         except Exception as e:
             console.print(f"[red]{t('model_switch_failed')}:[/] {e}")
 
@@ -260,7 +297,7 @@ class AgentCLI:
         table.add_column("", style="white")
 
         for i, (code, name) in enumerate(languages.items(), 1):
-            marker = "[green]✓[/]" if code == current_lang else ""
+            marker = f"[green]{SYM_CHECK()}[/]" if code == current_lang else ""
             table.add_row(str(i), name, marker)
 
         console.print(Panel(
@@ -290,7 +327,7 @@ class AgentCLI:
                 self.agent.set_language(new_lang)
                 # 保存语言设置到配置文件
                 self.config_manager.set_language(new_lang)
-                console.print(f"[green]✓[/] {t('language_switched')}")
+                console.print(f"[green]{SYM_CHECK()}[/] {t('language_switched')}")
             else:
                 console.print(f"[red]{t('invalid_choice')}[/]")
         except ValueError:
@@ -302,7 +339,7 @@ class AgentCLI:
         """重置对话"""
         self.agent.reset_conversation()
         console.print()
-        console.print(f"[green]✓[/] {t('conversation_reset')}")
+        console.print(f"[green]{SYM_CHECK()}[/] {t('conversation_reset')}")
         console.print()
 
     def show_history(self):
@@ -370,7 +407,7 @@ class AgentCLI:
         elif "index_sql" in tool_input:
             param_text = f" [dim]{tool_input['index_sql'][:50]}...[/]"
 
-        console.print(f"  [yellow]●[/] {label}{param_text}")
+        console.print(f"  [yellow]{SYM_BULLET()}[/] {label}{param_text}")
 
     def show_tool_result(self, tool_name: str, result: dict):
         """显示工具结果"""
@@ -378,18 +415,18 @@ class AgentCLI:
 
         if status == "success":
             if "count" in result:
-                console.print(f"    [green]✓[/] [dim]{t('returned_records', count=result['count'])}[/]")
+                console.print(f"    [green]{SYM_CHECK()}[/] [dim]{t('returned_records', count=result['count'])}[/]")
             elif "affected_rows" in result:
-                console.print(f"    [green]✓[/] [dim]{t('affected_rows', count=result['affected_rows'])}[/]")
+                console.print(f"    [green]{SYM_CHECK()}[/] [dim]{t('affected_rows', count=result['affected_rows'])}[/]")
             else:
-                console.print(f"    [green]✓[/] [dim]{t('success')}[/]")
+                console.print(f"    [green]{SYM_CHECK()}[/] [dim]{t('success')}[/]")
         elif status == "pending_confirmation":
             console.print(f"    [yellow]⏳[/] [dim]{t('waiting_confirm')}[/]")
         elif status == "error":
             error = result.get('error', t('error'))
             if len(error) > 60:
                 error = error[:60] + "..."
-            console.print(f"    [red]✗[/] [dim]{error}[/]")
+            console.print(f"    [red]{SYM_CROSS()}[/] [dim]{error}[/]")
 
     def run(self):
         """运行交互式CLI"""
@@ -420,9 +457,9 @@ class AgentCLI:
                 db_info = self.agent.db_tools.get_db_info()
                 db_type = db_info.get("type", "postgresql").upper()
                 version = db_info.get("version", "unknown")
-                console.print(f"[green]✓[/] {t('connected')}: [dim]{db_type} {version}[/]")
+                console.print(f"[green]{SYM_CHECK()}[/] {t('connected')}: [dim]{db_type} {version}[/]")
             except Exception as e:
-                console.print(f"[red]✗[/] {t('connection_failed')}: [dim]{e}[/]")
+                console.print(f"[red]{SYM_CROSS()}[/] {t('connection_failed')}: [dim]{e}[/]")
 
         console.print()
         console.print(f"[dim]{t('input_hint', help='/help', model='/model', lang='/language', exit='/exit')}[/]")
@@ -513,11 +550,11 @@ class AgentCLI:
                         if confirm:
                             result = self.agent.confirm_operation(i)
                             if result.get("status") == "success":
-                                console.print(f"[green]✓[/] {result.get('message', t('execute_success'))}")
+                                console.print(f"[green]{SYM_CHECK()}[/] {result.get('message', t('execute_success'))}")
                                 execution_results.append(t('execution_result_success', index=i+1, message=result.get('message', '')))
                             else:
                                 error_msg = result.get('error', t('error'))
-                                console.print(f"[red]✗[/] {t('execute_failed')}: {error_msg}")
+                                console.print(f"[red]{SYM_CROSS()}[/] {t('execute_failed')}: {error_msg}")
                                 execution_results.append(t('execution_result_failed', index=i+1, error=error_msg))
                                 has_errors = True  # 标记有错误发生
                         else:

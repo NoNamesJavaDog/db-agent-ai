@@ -6,11 +6,18 @@ Creates a standalone executable for Windows
 
 import os
 import sys
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
 # Get the project root directory
 project_root = os.path.dirname(os.path.abspath(SPEC))
+
+# Collect data files for rich (includes unicode data)
+rich_datas = collect_data_files('rich')
+
+# Collect all submodules for packages that have dynamic imports
+rich_hiddenimports = collect_submodules('rich')
 
 a = Analysis(
     ['main.py'],
@@ -19,7 +26,7 @@ a = Analysis(
     datas=[
         # Include config directory
         ('config', 'config'),
-    ],
+    ] + rich_datas,
     hiddenimports=[
         # Database drivers
         'pg8000',
@@ -44,18 +51,12 @@ a = Analysis(
         # Pydantic
         'pydantic',
         'pydantic_core',
-        # Rich console
-        'rich',
-        'rich.console',
-        'rich.panel',
-        'rich.table',
-        'rich.markdown',
         # Prompt toolkit
         'prompt_toolkit',
         # Other
         'multipart',
         'python_multipart',
-    ],
+    ] + rich_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
