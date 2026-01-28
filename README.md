@@ -194,7 +194,7 @@ ai_agent/
 - PostgreSQL 12+, MySQL 5.7/8.0, or GaussDB (Centralized/Distributed)
 - At least one LLM API Key (DeepSeek / OpenAI / Claude / etc.)
 
-> **Note for GaussDB users:** On Windows, GaussDB can use the standard PostgreSQL psycopg2 driver. On Linux (EulerOS), a dedicated driver from Huawei is required. See [GaussDB Configuration](#gaussdb-huawei) for details.
+> **Note for GaussDB users:** GaussDB uses pg8000 driver which supports sha256 authentication. On Linux (EulerOS), you can also use the dedicated driver from Huawei. See [GaussDB Configuration](#gaussdb-huawei) for details.
 
 ### Option 1: Direct Installation
 
@@ -231,6 +231,7 @@ scripts\start.bat
 ```
 requirements.txt
 ├── psycopg2-binary  # PostgreSQL driver
+├── pg8000           # GaussDB driver (sha256 auth support)
 ├── pymysql          # MySQL driver
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
@@ -526,12 +527,12 @@ password = secret    # Password
 
 > **GaussDB Driver Installation**
 >
-> **Windows:** Use the standard PostgreSQL psycopg2 driver (already included in requirements.txt):
+> **Default (All platforms):** Uses pg8000 driver which supports sha256 authentication (already included in requirements.txt):
 > ```bash
-> pip install psycopg2-binary
+> pip install pg8000
 > ```
 >
-> **Linux (EulerOS):** Requires a dedicated driver from Huawei:
+> **Linux (EulerOS) Alternative:** You can also use the dedicated driver from Huawei:
 > ```bash
 > # 1. Extract the driver package (provided by Huawei)
 > tar -zxvf GaussDB-Kernel-V500R002C10-EULER-64bit-Python.tar.gz

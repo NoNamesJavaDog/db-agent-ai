@@ -1,8 +1,9 @@
 """
 GaussDB Database Tools - Centralized and Distributed mode support
-GaussDB database tools using standard PostgreSQL psycopg2 driver (compatible with Windows)
+GaussDB database tools using pg8000 driver (supports sha256 authentication on Windows)
 """
-import psycopg2
+import pg8000
+import pg8000.native
 from typing import Dict, Any
 import logging
 import re
@@ -31,10 +32,10 @@ class GaussDBTools(BaseDatabaseTools):
         return "gaussdb"
 
     def get_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(
+        """Get database connection using pg8000 (supports sha256 auth)"""
+        return pg8000.connect(
             host=self.db_config.get("host", "localhost"),
-            port=self.db_config.get("port", 5432),
+            port=int(self.db_config.get("port", 5432)),
             database=self.db_config.get("database"),
             user=self.db_config.get("user"),
             password=self.db_config.get("password")
@@ -436,7 +437,7 @@ class GaussDBTools(BaseDatabaseTools):
             index_sql = index_sql.replace("CREATE INDEX", "CREATE INDEX CONCURRENTLY", 1)
 
         conn = self.get_connection()
-        conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+        conn.autocommit = True
 
         try:
             cur = conn.cursor()
