@@ -8,6 +8,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
 [![Oracle](https://img.shields.io/badge/Oracle-12c+-F80000.svg)](https://www.oracle.com/database/)
+[![SQL Server](https://img.shields.io/badge/SQL%20Server-2014+-CC2927.svg)](https://www.microsoft.com/sql-server)
 [![GaussDB](https://img.shields.io/badge/GaussDB-Centralized%20%7C%20Distributed-red.svg)](https://www.huaweicloud.com/product/gaussdb.html)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -161,6 +162,7 @@ ai_agent/
 │   │       ├── postgresql.py      # PostgreSQL implementation
 │   │       ├── mysql.py           # MySQL implementation
 │   │       ├── oracle.py          # Oracle implementation (12c+)
+│   │       ├── sqlserver.py       # SQL Server implementation (2014+)
 │   │       ├── gaussdb.py         # GaussDB implementation (Centralized/Distributed)
 │   │       └── factory.py         # Database tools factory
 │   ├── llm/                       # LLM clients
@@ -195,12 +197,14 @@ ai_agent/
 ### Requirements
 
 - Python 3.8+
-- PostgreSQL 12+, MySQL 5.7/8.0, Oracle 12c+, or GaussDB (Centralized/Distributed)
+- PostgreSQL 12+, MySQL 5.7/8.0, Oracle 12c+, SQL Server 2014+, or GaussDB (Centralized/Distributed)
 - At least one LLM API Key (DeepSeek / OpenAI / Claude / etc.)
 
 > **Note for GaussDB users:** GaussDB uses pg8000 driver which supports sha256 authentication. On Linux (EulerOS), you can also use the dedicated driver from Huawei. See [GaussDB Configuration](#gaussdb-huawei) for details.
 
 > **Note for Oracle users:** Uses `oracledb` Thin mode (Oracle's official Python driver) - no Oracle Client installation required. Supports Oracle 12c and above (12.1, 12.2, 18c, 19c, 21c, 23c). Oracle 11g is not supported.
+
+> **Note for SQL Server users:** Uses `pytds` (python-tds) - a pure Python driver requiring no ODBC installation. Supports SQL Server 2014 through 2022 and Azure SQL Database. Query Store features require SQL Server 2016+.
 
 ### Option 1: Direct Installation
 
@@ -239,6 +243,7 @@ requirements.txt
 ├── pg8000           # PostgreSQL/GaussDB driver (sha256 auth support)
 ├── pymysql          # MySQL driver
 ├── oracledb         # Oracle driver (Thin mode, no client required)
+├── python-tds       # SQL Server driver (pure Python, no ODBC required)
 ├── pydantic         # Data validation (>=2.10.0 for Python 3.13 support)
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
@@ -317,7 +322,7 @@ Edit `config/config.ini`:
 
 ```ini
 [database]
-type = postgresql    # postgresql, mysql, oracle, or gaussdb
+type = postgresql    # postgresql, mysql, oracle, sqlserver, or gaussdb
 host = localhost
 port = 5432          # 5432 for PostgreSQL/GaussDB, 3306 for MySQL
 database = your_database
@@ -657,10 +662,10 @@ Agent: Successfully created 23 objects:
 
 **Supported Migration Paths:**
 - **Oracle → GaussDB** (Optimized support with built-in detailed conversion rules)
-- Oracle → PostgreSQL / MySQL
-- MySQL → PostgreSQL / GaussDB / Oracle
-- PostgreSQL → MySQL / GaussDB / Oracle
-- SQL Server → PostgreSQL / MySQL
+- Oracle → PostgreSQL / MySQL / SQL Server
+- MySQL → PostgreSQL / GaussDB / Oracle / SQL Server
+- PostgreSQL → MySQL / GaussDB / Oracle / SQL Server
+- SQL Server → PostgreSQL / MySQL / GaussDB / Oracle
 
 ### Oracle → GaussDB Core Conversion Rules
 
@@ -747,6 +752,47 @@ password = oracle    # Password
 > **Permission Notes:**
 > - For full functionality, DBA privileges are recommended
 > - Without DBA privileges, the tool falls back to ALL_* views instead of DBA_* views
+
+**SQL Server:**
+```ini
+[database]
+type = sqlserver     # Database type
+host = localhost     # Database host
+port = 1433          # SQL Server default port
+database = mydb      # Database name
+user = sa            # Username
+password = secret    # Password
+```
+
+> **SQL Server Driver Notes**
+>
+> Uses `pytds` (python-tds) - a pure Python TDS protocol implementation:
+> ```bash
+> pip install python-tds
+> ```
+>
+> **Features:**
+> - Pure Python implementation - no ODBC driver installation required
+> - Supports SQL Server 2014, 2016, 2017, 2019, 2022 and Azure SQL Database
+> - Supports MARS (Multiple Active Result Sets) and modern date types
+>
+> **Version-specific Features:**
+> - SQL Server 2014 (12.x): Basic support
+> - SQL Server 2016 (13.x)+: Query Store for historical query analysis
+> - SQL Server 2022 (16.x): New permission model (VIEW SERVER PERFORMANCE STATE)
+> - Azure SQL Database: Full support with VIEW DATABASE STATE
+>
+> **Supported Features:**
+> - Full table listing and schema exploration
+> - Slow query analysis via sys.dm_exec_query_stats or Query Store
+> - Execution plan analysis via SHOWPLAN_XML
+> - Index usage analysis via sys.dm_db_index_usage_stats
+> - Online index creation (WITH ONLINE = ON, Enterprise edition only)
+> - Statistics update via UPDATE STATISTICS
+>
+> **Permission Notes:**
+> - VIEW SERVER STATE (2019 and earlier) or VIEW SERVER PERFORMANCE STATE (2022+) for DMV access
+> - SHOWPLAN permission for execution plan analysis
 
 **GaussDB (Huawei):**
 ```ini
@@ -1003,7 +1049,7 @@ Agent: Successfully inserted 95 new records (5 duplicates skipped).
 ## FAQ
 
 ### Q: Which databases are supported?
-**A:** Currently supports PostgreSQL 12+, MySQL 5.7/8.0, Oracle 12c+, and GaussDB (both Centralized and Distributed modes). SQL Server support is under development.
+**A:** Currently supports PostgreSQL 12+, MySQL 5.7/8.0, Oracle 12c+, SQL Server 2014+ (including Azure SQL), and GaussDB (both Centralized and Distributed modes).
 
 ### Q: Will it accidentally delete data?
 **A:** No. All INSERT/UPDATE/DELETE/DROP operations require confirmation. You can preview the SQL before deciding to execute.

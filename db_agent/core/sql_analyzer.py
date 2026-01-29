@@ -58,7 +58,7 @@ class SQLAnalyzer:
         初始化SQL分析器
 
         Args:
-            db_type: 数据库类型 (postgresql/mysql/gaussdb/oracle)
+            db_type: 数据库类型 (postgresql/mysql/gaussdb/oracle/sqlserver)
         """
         self.db_type = db_type.lower()
 
@@ -150,6 +150,8 @@ class SQLAnalyzer:
             issues, performance_summary = self._parse_mysql_plan(plan)
         elif self.db_type == "oracle":
             issues, performance_summary = self._parse_oracle_plan(plan)
+        elif self.db_type == "sqlserver":
+            issues, performance_summary = self._parse_sqlserver_plan(plan)
         else:
             issues, performance_summary = self._parse_postgresql_plan(plan)
 
@@ -450,6 +452,167 @@ class SQLAnalyzer:
                         "message": f"预估结果集过大: {max_rows:,} 行",
                         "suggestion": "考虑添加更多过滤条件或使用分页限制结果数量"
                     })
+
+        return issues, performance_summary
+
+    def _parse_sqlserver_plan(self, plan: List[str]) -> Tuple[List[Dict], Dict]:
+        """
+        解析SQL Server的SHOWPLAN_XML输出
+
+        Args:
+            plan: SHOWPLAN_XML输出的行列表
+
+        Returns:
+            (issues, performance_summary)
+        """
+        issues = []
+        performance_summary = {
+            "scan_types": [],
+            "total_cost": None,
+            "estimated_rows": None
+        }
+
+        plan_text = "\n".join(plan) if isinstance(plan, list) else str(plan)
+
+        # Extract total cost from EstimatedTotalSubtreeCost
+        cost_match = re.search(r'EstimatedTotalSubtreeCost="([\d.]+)"', plan_text)
+        if cost_match:
+            total_cost = float(cost_match.group(1))
+            performance_summary["total_cost"] = total_cost
+            if total_cost > self.THRESHOLDS["high_cost"]:
+                issues.append({
+                    "level": IssueLevel.WARNING.value,
+                    "type": "high_cost",
+                    "message": f"执行成本过高: {total_cost:.2f}",
+                    "suggestion": "考虑添加索引或优化查询条件"
+                })
+
+        # Detect Table Scan (full table scan)
+        table_scan_pattern = r'PhysicalOp="Table Scan"[^>]*Table="\[([^\]]+)\]'
+        for match in re.finditer(table_scan_pattern, plan_text, re.IGNORECASE):
+            table_name = match.group(1)
+            performance_summary["scan_types"].append(f"Table Scan on {table_name}")
+
+            # Try to extract estimated rows
+            rows = 0
+            rows_match = re.search(rf'Table="\[{re.escape(table_name)}\][^>]*EstimateRows="([\d.]+)"', plan_text, re.IGNORECASE)
+            if rows_match:
+                rows = int(float(rows_match.group(1)))
+
+            if rows > self.THRESHOLDS["full_scan_rows"]:
+                issues.append({
+                    "level": IssueLevel.CRITICAL.value,
+                    "type": "full_table_scan",
+                    "table": table_name,
+                    "rows": rows,
+                    "message": f"表 {table_name} 全表扫描 (Table Scan)，预估扫描 {rows:,} 行",
+                    "suggestion": "为查询条件列添加索引"
+                })
+            else:
+                issues.append({
+                    "level": IssueLevel.WARNING.value,
+                    "type": "full_table_scan",
+                    "table": table_name,
+                    "message": f"表 {table_name} 全表扫描 (Table Scan)",
+                    "suggestion": "为查询条件列添加索引"
+                })
+
+        # Detect Clustered Index Scan (similar to full table scan)
+        idx_scan_pattern = r'PhysicalOp="Clustered Index Scan"[^>]*Table="\[([^\]]+)\]'
+        for match in re.finditer(idx_scan_pattern, plan_text, re.IGNORECASE):
+            table_name = match.group(1)
+            performance_summary["scan_types"].append(f"Clustered Index Scan on {table_name}")
+
+            # Try to extract estimated rows
+            rows = 0
+            rows_match = re.search(rf'Table="\[{re.escape(table_name)}\][^>]*EstimateRows="([\d.]+)"', plan_text, re.IGNORECASE)
+            if rows_match:
+                rows = int(float(rows_match.group(1)))
+
+            if rows > self.THRESHOLDS["full_scan_rows"]:
+                issues.append({
+                    "level": IssueLevel.CRITICAL.value,
+                    "type": "clustered_index_scan",
+                    "table": table_name,
+                    "rows": rows,
+                    "message": f"表 {table_name} 聚集索引扫描 (Clustered Index Scan)，预估扫描 {rows:,} 行",
+                    "suggestion": "考虑添加非聚集索引或优化查询条件"
+                })
+
+        # Detect Nested Loops with high row counts
+        nested_loop_pattern = r'PhysicalOp="Nested Loops"[^>]*EstimateRows="([\d.]+)"'
+        for match in re.finditer(nested_loop_pattern, plan_text, re.IGNORECASE):
+            rows = int(float(match.group(1)))
+            if rows > self.THRESHOLDS["nested_loop_rows"]:
+                issues.append({
+                    "level": IssueLevel.WARNING.value,
+                    "type": "nested_loop",
+                    "rows": rows,
+                    "message": f"嵌套循环连接 (Nested Loops)，涉及较大数据量: {rows:,} 行",
+                    "suggestion": "考虑使用 Hash Match 或 Merge Join，或为关联列添加索引"
+                })
+
+        # Detect Sort operations
+        sort_pattern = r'PhysicalOp="Sort"'
+        if re.search(sort_pattern, plan_text, re.IGNORECASE):
+            issues.append({
+                "level": IssueLevel.INFO.value,
+                "type": "sort_operation",
+                "message": "排序操作 (Sort)",
+                "suggestion": "如果数据量较大，考虑添加索引以避免排序"
+            })
+
+        # Detect Hash Match (can be expensive for large datasets)
+        hash_match_pattern = r'PhysicalOp="Hash Match"[^>]*EstimateRows="([\d.]+)"'
+        for match in re.finditer(hash_match_pattern, plan_text, re.IGNORECASE):
+            rows = int(float(match.group(1)))
+            if rows > self.THRESHOLDS["large_rows"]:
+                issues.append({
+                    "level": IssueLevel.WARNING.value,
+                    "type": "hash_match",
+                    "rows": rows,
+                    "message": f"Hash Match 操作涉及大量数据: {rows:,} 行",
+                    "suggestion": "确保有足够内存，或考虑优化查询减少数据量"
+                })
+
+        # Detect Key Lookup (can be expensive)
+        key_lookup_pattern = r'PhysicalOp="Key Lookup"[^>]*EstimateRows="([\d.]+)"'
+        for match in re.finditer(key_lookup_pattern, plan_text, re.IGNORECASE):
+            rows = int(float(match.group(1)))
+            if rows > self.THRESHOLDS["nested_loop_rows"]:
+                issues.append({
+                    "level": IssueLevel.WARNING.value,
+                    "type": "key_lookup",
+                    "rows": rows,
+                    "message": f"键查找 (Key Lookup)，预估 {rows:,} 次查找",
+                    "suggestion": "考虑创建覆盖索引以避免键查找"
+                })
+
+        # Extract estimated rows
+        rows_pattern = r'EstimateRows="([\d.]+)"'
+        all_rows = re.findall(rows_pattern, plan_text)
+        if all_rows:
+            max_rows = max([int(float(r)) for r in all_rows])
+            performance_summary["estimated_rows"] = max_rows
+            if max_rows > self.THRESHOLDS["large_rows"]:
+                if not any(i["type"] == "full_table_scan" for i in issues):
+                    issues.append({
+                        "level": IssueLevel.WARNING.value,
+                        "type": "large_result_set",
+                        "rows": max_rows,
+                        "message": f"预估结果集过大: {max_rows:,} 行",
+                        "suggestion": "考虑添加更多过滤条件或使用 TOP/OFFSET-FETCH 限制结果数量"
+                    })
+
+        # Detect missing index hints
+        missing_idx_pattern = r'MissingIndexes'
+        if re.search(missing_idx_pattern, plan_text, re.IGNORECASE):
+            issues.append({
+                "level": IssueLevel.WARNING.value,
+                "type": "missing_index",
+                "message": "SQL Server 建议创建缺失索引",
+                "suggestion": "检查执行计划中的 MissingIndexes 节点获取索引建议"
+            })
 
         return issues, performance_summary
 

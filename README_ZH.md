@@ -8,6 +8,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
 [![Oracle](https://img.shields.io/badge/Oracle-12c+-F80000.svg)](https://www.oracle.com/database/)
+[![SQL Server](https://img.shields.io/badge/SQL%20Server-2014+-CC2927.svg)](https://www.microsoft.com/sql-server)
 [![GaussDB](https://img.shields.io/badge/GaussDB-集中式%20%7C%20分布式-red.svg)](https://www.huaweicloud.com/product/gaussdb.html)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -160,6 +161,7 @@ ai_agent/
 │   │       ├── postgresql.py      # PostgreSQL 实现
 │   │       ├── mysql.py           # MySQL 实现
 │   │       ├── oracle.py          # Oracle 实现（12c+）
+│   │       ├── sqlserver.py       # SQL Server 实现（2014+）
 │   │       ├── gaussdb.py         # GaussDB 实现（集中式/分布式）
 │   │       └── factory.py         # 数据库工具工厂
 │   ├── llm/                       # LLM 客户端
@@ -194,12 +196,14 @@ ai_agent/
 ### 环境要求
 
 - Python 3.8+
-- PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+ 或 GaussDB（集中式/分布式）
+- PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+、SQL Server 2014+ 或 GaussDB（集中式/分布式）
 - 至少一个 LLM API Key（DeepSeek / OpenAI / Claude 等）
 
 > **GaussDB 用户注意：** GaussDB 使用 pg8000 驱动（支持 sha256 认证）。Linux（欧拉系统）也可使用华为提供的专用驱动。详见 [GaussDB 配置](#gaussdb华为) 章节。
 
 > **Oracle 用户注意：** 使用 `oracledb` Thin 模式（Oracle 官方 Python 驱动）- 无需安装 Oracle Client。支持 Oracle 12c 及以上版本（12.1、12.2、18c、19c、21c、23c）。不支持 Oracle 11g。
+
+> **SQL Server 用户注意：** 使用 `pytds` (python-tds) - 纯 Python 驱动，无需安装 ODBC。支持 SQL Server 2014 至 2022 及 Azure SQL Database。Query Store 功能需要 SQL Server 2016+。
 
 ### 方式一：直接安装
 
@@ -239,6 +243,7 @@ requirements.txt
 ├── pg8000           # PostgreSQL/GaussDB 驱动（支持 sha256 认证）
 ├── pymysql          # MySQL 驱动
 ├── oracledb         # Oracle 驱动（Thin 模式，无需客户端）
+├── python-tds       # SQL Server 驱动（纯 Python，无需 ODBC）
 ├── pydantic         # 数据验证（>=2.10.0 支持 Python 3.13）
 ├── openai           # OpenAI/DeepSeek API
 ├── anthropic        # Claude API
@@ -317,7 +322,7 @@ scripts\download_deps.bat      # Windows
 
 ```ini
 [database]
-type = postgresql    # postgresql、mysql、oracle 或 gaussdb
+type = postgresql    # postgresql、mysql、oracle、sqlserver 或 gaussdb
 host = localhost
 port = 5432          # PostgreSQL/GaussDB 默认 5432，MySQL 默认 3306
 database = your_database
@@ -657,10 +662,10 @@ De> 把这些 Oracle DDL 语句转换成 GaussDB 语法并执行
 
 **支持的迁移路径：**
 - **Oracle → GaussDB**（优化支持，内置详细转换规则）
-- Oracle → PostgreSQL / MySQL
-- MySQL → PostgreSQL / GaussDB / Oracle
-- PostgreSQL → MySQL / GaussDB / Oracle
-- SQL Server → PostgreSQL / MySQL
+- Oracle → PostgreSQL / MySQL / SQL Server
+- MySQL → PostgreSQL / GaussDB / Oracle / SQL Server
+- PostgreSQL → MySQL / GaussDB / Oracle / SQL Server
+- SQL Server → PostgreSQL / MySQL / GaussDB / Oracle
 
 ### Oracle → GaussDB 核心转换规则
 
@@ -745,6 +750,47 @@ password = oracle    # 密码
 > **权限说明：**
 > - 建议使用 DBA 权限以获得完整功能
 > - 无 DBA 权限时，工具会自动降级使用 ALL_* 视图代替 DBA_* 视图
+
+**SQL Server:**
+```ini
+[database]
+type = sqlserver     # 数据库类型
+host = localhost     # 数据库主机
+port = 1433          # SQL Server 默认端口
+database = mydb      # 数据库名
+user = sa            # 用户名
+password = secret    # 密码
+```
+
+> **SQL Server 驱动说明**
+>
+> 使用 `pytds` (python-tds) - 纯 Python TDS 协议实现：
+> ```bash
+> pip install python-tds
+> ```
+>
+> **特性：**
+> - 纯 Python 实现 - 无需安装 ODBC 驱动
+> - 支持 SQL Server 2014、2016、2017、2019、2022 及 Azure SQL Database
+> - 支持 MARS（多活动结果集）和现代日期类型
+>
+> **版本特定功能：**
+> - SQL Server 2014 (12.x)：基础支持
+> - SQL Server 2016 (13.x)+：Query Store 历史查询分析
+> - SQL Server 2022 (16.x)：新权限模型 (VIEW SERVER PERFORMANCE STATE)
+> - Azure SQL Database：完整支持，使用 VIEW DATABASE STATE
+>
+> **支持的功能：**
+> - 完整的表列表和模式探索
+> - 通过 sys.dm_exec_query_stats 或 Query Store 进行慢查询分析
+> - 通过 SHOWPLAN_XML 进行执行计划分析
+> - 通过 sys.dm_db_index_usage_stats 进行索引使用分析
+> - 在线索引创建 (WITH ONLINE = ON，仅企业版)
+> - 通过 UPDATE STATISTICS 更新统计信息
+>
+> **权限说明：**
+> - VIEW SERVER STATE（2019及以前）或 VIEW SERVER PERFORMANCE STATE（2022+）用于 DMV 访问
+> - SHOWPLAN 权限用于执行计划分析
 
 **GaussDB（华为）:**
 ```ini
@@ -1000,7 +1046,7 @@ Agent 自动检测数据库版本，生成兼容的 SQL：
 ## ❓ 常见问题
 
 ### Q: 支持哪些数据库？
-**A:** 目前支持 PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+ 和 GaussDB（集中式和分布式模式）。SQL Server 等支持正在开发中。
+**A:** 目前支持 PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+、SQL Server 2014+（包括 Azure SQL）和 GaussDB（集中式和分布式模式）。
 
 ### Q: 会不会误操作删除数据？
 **A:** 不会。所有 INSERT/UPDATE/DELETE/DROP 等危险操作都需要二次确认，你可以预览将要执行的 SQL 后再决定是否执行。

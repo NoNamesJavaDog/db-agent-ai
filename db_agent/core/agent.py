@@ -85,6 +85,9 @@ class SQLTuningAgent:
             db_type_name = "MySQL"
         elif db_type == "oracle":
             db_type_name = "Oracle"
+        elif db_type == "sqlserver":
+            is_azure = self.db_info.get("is_azure", False)
+            db_type_name = "Azure SQL Database" if is_azure else "SQL Server"
         else:
             db_type_name = "PostgreSQL"
 
@@ -254,6 +257,72 @@ Oracle特定说明:
 - 使用DBMS_STATS.GATHER_TABLE_STATS更新统计信息
 - FETCH FIRST n ROWS ONLY用于分页（12c+）
 - DBA_*视图需要DBA权限，无权限时降级使用ALL_*视图"""
+        elif db_type == "sqlserver":
+            db_type_name = "SQL Server"
+            is_azure = self.db_info.get("is_azure", False)
+            version_major = self.db_info.get("version_major", 0)
+            if is_azure:
+                db_type_name = "Azure SQL Database"
+            db_specific_notes_en = f"""
+SQL Server-specific notes:
+- Uses pytds (python-tds) driver - pure Python, no ODBC required
+- Supports SQL Server 2014+ (12.x, 13.x, 14.x, 15.x, 16.x) and Azure SQL
+- Current version: {version_major}.x {"(Azure SQL)" if is_azure else ""}
+- Use SET SHOWPLAN_XML ON for execution plan analysis
+- Use sys.dm_exec_query_stats for slow query analysis
+- Query Store available in SQL Server 2016+ for historical query analysis
+- CREATE INDEX ... WITH (ONLINE = ON) for online index creation (Enterprise only)
+- Use UPDATE STATISTICS to refresh table statistics
+- TOP n for row limiting (or OFFSET-FETCH for pagination)
+- sys.dm_exec_requests for monitoring currently running queries
+
+**Permission Requirements:**
+- VIEW SERVER STATE (2019 and earlier) or VIEW SERVER PERFORMANCE STATE (2022+) for DMV access
+- SHOWPLAN permission for execution plans
+
+**SQL Server → Other Database Migration:**
+| SQL Server | PostgreSQL/GaussDB |
+|------------|-------------------|
+| INT IDENTITY | SERIAL / GENERATED ALWAYS AS IDENTITY |
+| NVARCHAR(n) | VARCHAR(n) |
+| DATETIME / DATETIME2 | TIMESTAMP |
+| BIT | BOOLEAN |
+| UNIQUEIDENTIFIER | UUID |
+| GETDATE() | CURRENT_TIMESTAMP |
+| ISNULL(a,b) | COALESCE(a,b) |
+| TOP n | LIMIT n |
+| OFFSET n ROWS FETCH NEXT m ROWS ONLY | LIMIT m OFFSET n |
+| [bracket] quotes | "double" quotes |"""
+            db_specific_notes_zh = f"""
+SQL Server特定说明:
+- 使用pytds (python-tds)驱动 - 纯Python实现，无需ODBC
+- 支持SQL Server 2014+（12.x、13.x、14.x、15.x、16.x）和Azure SQL
+- 当前版本: {version_major}.x {"(Azure SQL)" if is_azure else ""}
+- 使用SET SHOWPLAN_XML ON分析执行计划
+- 使用sys.dm_exec_query_stats进行慢查询分析
+- SQL Server 2016+支持Query Store进行历史查询分析
+- CREATE INDEX ... WITH (ONLINE = ON)在线创建索引（仅企业版）
+- 使用UPDATE STATISTICS更新表统计信息
+- TOP n用于限制行数（或OFFSET-FETCH用于分页）
+- sys.dm_exec_requests用于监控当前运行的查询
+
+**权限要求:**
+- VIEW SERVER STATE（2019及以前）或VIEW SERVER PERFORMANCE STATE（2022+）用于DMV访问
+- SHOWPLAN权限用于执行计划
+
+**SQL Server → 其他数据库迁移:**
+| SQL Server | PostgreSQL/GaussDB |
+|------------|-------------------|
+| INT IDENTITY | SERIAL / GENERATED ALWAYS AS IDENTITY |
+| NVARCHAR(n) | VARCHAR(n) |
+| DATETIME / DATETIME2 | TIMESTAMP |
+| BIT | BOOLEAN |
+| UNIQUEIDENTIFIER | UUID |
+| GETDATE() | CURRENT_TIMESTAMP |
+| ISNULL(a,b) | COALESCE(a,b) |
+| TOP n | LIMIT n |
+| OFFSET n ROWS FETCH NEXT m ROWS ONLY | LIMIT m OFFSET n |
+| [方括号]引用 | "双引号"引用 |"""
         else:
             db_specific_notes_en = """
 PostgreSQL-specific notes:

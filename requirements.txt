@@ -2,6 +2,7 @@ anthropic==0.18.1
 pg8000>=1.30.0
 pymysql>=1.1.0
 oracledb>=2.0.0
+python-tds>=1.15.0
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic>=2.10.0
