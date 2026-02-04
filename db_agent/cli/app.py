@@ -59,6 +59,7 @@ try:
     from prompt_toolkit import prompt as pt_prompt
     from prompt_toolkit.completion import WordCompleter
     from prompt_toolkit.styles import Style
+    from prompt_toolkit.history import FileHistory
     PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     PROMPT_TOOLKIT_AVAILABLE = False
@@ -322,7 +323,7 @@ class AgentCLI:
         self._loaded_file_content = None
         self._loaded_file_path = None
 
-        # 设置prompt_toolkit自动补全
+        # 设置prompt_toolkit自动补全和命令历史
         if PROMPT_TOOLKIT_AVAILABLE:
             self.command_completer = WordCompleter(
                 [cmd for cmd, _ in self.slash_commands],
@@ -335,6 +336,13 @@ class AgentCLI:
                 'scrollbar.background': 'bg:#333333',
                 'scrollbar.button': 'bg:#666666',
             })
+            # 命令历史文件
+            history_dir = os.path.expanduser("~/.db_agent")
+            os.makedirs(history_dir, exist_ok=True)
+            history_file = os.path.join(history_dir, "command_history")
+            self.command_history = FileHistory(history_file)
+        else:
+            self.command_history = None
 
         # ESC 键监听器
         self.esc_listener = EscapeKeyListener()
@@ -1831,6 +1839,7 @@ class AgentCLI:
                             prompt_prefix,
                             completer=self.command_completer,
                             style=self.pt_style,
+                            history=self.command_history,
                             complete_while_typing=True
                         ).strip()
                     except (EOFError, KeyboardInterrupt):
