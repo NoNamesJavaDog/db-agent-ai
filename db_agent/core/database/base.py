@@ -2,7 +2,7 @@
 Database Tools Base Class - Abstract interface for database operations
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from db_agent.core.sql_analyzer import SQLAnalyzer
 
 
@@ -141,4 +141,104 @@ class BaseDatabaseTools(ABC):
     @abstractmethod
     def db_type(self) -> str:
         """Return the database type identifier (e.g., 'postgresql', 'mysql')"""
+        pass
+
+    # ==================== Migration Support Methods ====================
+
+    @abstractmethod
+    def get_all_objects(self, schema: str = None, object_types: List[str] = None) -> Dict[str, Any]:
+        """
+        Get all database objects.
+
+        Args:
+            schema: Schema name (optional, uses default if not specified)
+            object_types: List of object types to include (optional).
+                          Valid types: table, view, index, sequence, procedure, function, trigger, constraint
+
+        Returns:
+            Dictionary with object lists by type:
+            {
+                "tables": [{"name": str, "schema": str, "row_count": int, ...}],
+                "views": [{"name": str, "schema": str, "definition": str, ...}],
+                "indexes": [{"name": str, "table": str, "columns": list, ...}],
+                "sequences": [{"name": str, "schema": str, ...}],
+                "procedures": [{"name": str, "schema": str, "parameters": list, ...}],
+                "functions": [{"name": str, "schema": str, "parameters": list, ...}],
+                "triggers": [{"name": str, "table": str, "event": str, ...}],
+                "constraints": [{"name": str, "table": str, "type": str, ...}]
+            }
+        """
+        pass
+
+    @abstractmethod
+    def get_object_ddl(self, object_type: str, object_name: str, schema: str = None) -> Dict[str, Any]:
+        """
+        Get the DDL statement for a database object.
+
+        Args:
+            object_type: Type of object (table, view, index, sequence, procedure, function, trigger)
+            object_name: Name of the object
+            schema: Schema name (optional)
+
+        Returns:
+            Dictionary with DDL information:
+            {
+                "object_type": str,
+                "object_name": str,
+                "schema": str,
+                "ddl": str,
+                "dependencies": [{"type": str, "name": str}]
+            }
+        """
+        pass
+
+    @abstractmethod
+    def get_object_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """
+        Get object dependencies in the database.
+
+        Args:
+            schema: Schema name (optional)
+
+        Returns:
+            Dictionary with dependency information:
+            {
+                "dependencies": [
+                    {
+                        "object_type": str,
+                        "object_name": str,
+                        "depends_on_type": str,
+                        "depends_on_name": str
+                    }
+                ],
+                "dependency_graph": {
+                    "object_name": ["dependency1", "dependency2", ...]
+                }
+            }
+        """
+        pass
+
+    @abstractmethod
+    def get_foreign_key_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """
+        Get foreign key dependencies between tables.
+
+        Args:
+            schema: Schema name (optional)
+
+        Returns:
+            Dictionary with FK dependency information:
+            {
+                "foreign_keys": [
+                    {
+                        "constraint_name": str,
+                        "table": str,
+                        "column": str,
+                        "referenced_table": str,
+                        "referenced_column": str
+                    }
+                ],
+                "table_order": ["table1", "table2", ...]  # Topologically sorted
+            }
+        """
         pass

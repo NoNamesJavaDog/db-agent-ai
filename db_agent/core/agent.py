@@ -2,12 +2,18 @@
 SQL Tuning AI Agent - Core Engine
 """
 import json
-from typing import Dict, List, Any
+from typing import Dict, List, Any, TYPE_CHECKING
 import logging
 from db_agent.llm import BaseLLMClient
 from db_agent.i18n import i18n, t
 from .database import DatabaseToolsFactory
 from .migration_rules import get_migration_rules, format_rules_for_prompt, ORACLE_TO_GAUSSDB_RULES
+from .token_counter import TokenCounter
+from .context_compression import ContextCompressor
+from db_agent.storage.models import MigrationTask, MigrationItem
+
+if TYPE_CHECKING:
+    from db_agent.storage import SQLiteStorage
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +25,9 @@ class SQLTuningAgent:
         self,
         llm_client: BaseLLMClient,
         db_config: Dict[str, Any],
-        language: str = "zh"
+        language: str = "zh",
+        storage: "SQLiteStorage" = None,
+        session_id: int = None
     ):
         """
         初始化AI Agent
@@ -28,8 +36,12 @@ class SQLTuningAgent:
             llm_client: LLM客户端
             db_config: 数据库配置 (包含 type 字段指定数据库类型: postgresql 或 mysql)
             language: 界面语言 (zh/en)
+            storage: SQLite storage instance for session persistence
+            session_id: Session ID to associate with this agent
         """
         self.llm_client = llm_client
+        self.storage = storage
+        self.session_id = session_id
 
         # Extract and remove db_type from config (default to postgresql for backward compatibility)
         db_config = db_config.copy()  # Don't modify the original
@@ -46,12 +58,57 @@ class SQLTuningAgent:
         # 初始化系统提示和工具定义
         self._init_system_prompt()
 
+        # 初始化上下文压缩组件
+        self.token_counter = TokenCounter(
+            provider=llm_client.get_provider_name(),
+            model=llm_client.get_model_name()
+        )
+        self.context_compressor = ContextCompressor(
+            llm_client=llm_client,
+            token_counter=self.token_counter
+        )
+
+        # 中断控制
+        self._interrupt_requested = False
+        self._interrupted_state = None  # 保存被打断时的状态
+
         logger.info(f"AI Agent初始化完成: {llm_client.get_provider_name()} - {llm_client.get_model_name()} (DB: {db_type})")
 
     def switch_model(self, llm_client: BaseLLMClient):
         """切换LLM模型"""
         self.llm_client = llm_client
+
+        # 重新初始化上下文压缩组件（因为不同模型可能有不同的上下文限制）
+        self.token_counter = TokenCounter(
+            provider=llm_client.get_provider_name(),
+            model=llm_client.get_model_name()
+        )
+        self.context_compressor = ContextCompressor(
+            llm_client=llm_client,
+            token_counter=self.token_counter
+        )
+
         logger.info(f"模型已切换: {llm_client.get_provider_name()} - {llm_client.get_model_name()}")
+
+    def reinitialize_db_tools(self, db_config: Dict[str, Any]):
+        """
+        重新初始化数据库工具（用于切换数据库连接）
+
+        Args:
+            db_config: 新的数据库配置
+        """
+        db_config = db_config.copy()
+        db_type = db_config.pop("type", "postgresql")
+        self.db_type = db_type
+
+        # 重新创建数据库工具
+        self.db_tools = DatabaseToolsFactory.create(db_type, db_config)
+        self.db_info = self.db_tools.get_db_info()
+
+        # 重新初始化系统提示
+        self._init_system_prompt()
+
+        logger.info(f"数据库工具已重新初始化: {db_type}")
 
     def get_current_model_info(self) -> Dict[str, str]:
         """获取当前模型信息"""
@@ -372,8 +429,14 @@ Available tools:
 Working principles:
 1. Proactively use tools - First use list_tables and describe_table to understand database structure
 2. Query before modify - View related data before executing modification operations
-3. Confirmation mechanism - All non-SELECT operations (INSERT/UPDATE/DELETE/CREATE/DROP etc.) will require user confirmation before execution
+3. **IMPORTANT: Direct tool execution** - When you need to execute non-SELECT operations (INSERT/UPDATE/DELETE/CREATE/DROP etc.), call the execute_sql tool DIRECTLY. Do NOT ask the user for confirmation in your text response. The system will automatically prompt the user for confirmation through the CLI interface.
 4. Detailed feedback - Inform the user of execution results after each operation
+
+**How the confirmation mechanism works:**
+- When you call execute_sql with a non-SELECT statement, the tool returns "pending_confirmation" status
+- The CLI will then display the SQL to the user and ask them to confirm via a menu interface
+- You do NOT need to ask "Do you want me to execute this?" - just call the tool directly
+- After execution, continue with the workflow
 
 **Error Handling & Self-Recovery (IMPORTANT):**
 When a SQL operation fails after user confirmation:
@@ -387,12 +450,10 @@ When a SQL operation fails after user confirmation:
 4. **Continue the workflow** - After resolving the error, proceed with remaining steps of the task
 5. **Report progress** - Briefly inform the user about the error and how you resolved it, then continue
 
-NOTE: You must STILL require user confirmation for every non-SELECT operation. The error recovery applies AFTER the user has confirmed execution.
-
 Example workflow for inserting test data:
-1. Show the INSERT SQL to user, wait for confirmation
-2. User confirms -> Execute
-3. If error occurs (e.g., duplicate key) -> Analyze error, modify SQL (e.g., add INSERT IGNORE), ask user to confirm the modified SQL
+1. Check table structure using describe_table
+2. Call execute_sql tool directly with the INSERT statement (system handles confirmation)
+3. If error occurs -> Analyze error, modify SQL, call execute_sql again
 4. Continue with next step of the task
 
 When communicating with users:
@@ -485,8 +546,14 @@ Remember: You are the user's database assistant, helping them directly operate t
 工作原则:
 1. 主动使用工具 - 先用list_tables和describe_table了解数据库结构
 2. 先查后改 - 执行修改操作前先查看相关数据
-3. 确认机制 - 所有非SELECT操作(INSERT/UPDATE/DELETE/CREATE/DROP等)都会要求用户确认后才执行
+3. **重要：直接调用工具** - 当需要执行非SELECT操作(INSERT/UPDATE/DELETE/CREATE/DROP等)时，直接调用execute_sql工具。不要在回复中询问用户是否确认，系统会通过CLI界面自动向用户显示确认菜单。
 4. 详细反馈 - 每次操作后告知用户执行结果
+
+**确认机制的工作方式:**
+- 当你调用execute_sql执行非SELECT语句时，工具会返回"pending_confirmation"状态
+- CLI会向用户显示SQL并通过菜单界面请求确认
+- 你不需要问"是否要执行？" - 直接调用工具即可
+- 执行完成后，继续工作流程
 
 **错误处理与自我修复（重要）:**
 当用户确认执行后SQL操作失败时：
@@ -500,12 +567,10 @@ Remember: You are the user's database assistant, helping them directly operate t
 4. **继续工作流程** - 解决错误后，继续执行任务的剩余步骤
 5. **报告进度** - 简要告知用户遇到的错误及处理方式，然后继续执行
 
-注意：你仍然必须对每个非SELECT操作要求用户确认！错误恢复机制是在用户确认执行之后才适用的。
-
 示例工作流程（插入测试数据）：
-1. 向用户展示 INSERT SQL，等待确认
-2. 用户确认 -> 执行
-3. 如果出错（如重复键）-> 分析错误，修改SQL（如添加 INSERT IGNORE），请求用户确认修改后的SQL
+1. 使用describe_table查看表结构
+2. 直接调用execute_sql工具执行INSERT语句（系统会处理确认）
+3. 如果出错 -> 分析错误，修改SQL，再次调用execute_sql
 4. 继续执行任务的下一步
 
 与用户交流时:
@@ -745,6 +810,153 @@ Remember: You are the user's database assistant, helping them directly operate t
                             "required": ["table_name"]
                         }
                     }
+                },
+                # Migration tools
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "analyze_source_database",
+                        "description": "Analyze source database to get all objects (tables, indexes, views, sequences, procedures, etc.) and their dependencies for migration planning.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "source_connection_name": {"type": "string", "description": "Source database connection name"},
+                                "schema": {"type": "string", "description": "Schema to analyze (optional)"},
+                                "object_types": {"type": "array", "items": {"type": "string"}, "description": "Object types to include: table, view, index, sequence, procedure, function, trigger, constraint"}
+                            },
+                            "required": ["source_connection_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "create_migration_plan",
+                        "description": "Create a migration plan with execution order based on object dependencies. Generates converted DDL for target database.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "Migration task ID"},
+                                "source_connection_name": {"type": "string", "description": "Source database connection name"},
+                                "target_schema": {"type": "string", "description": "Target schema name (optional)"}
+                            },
+                            "required": ["task_id", "source_connection_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_migration_plan",
+                        "description": "Get migration plan details including all items and their status.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "Migration task ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_migration_status",
+                        "description": "Get migration task status and progress summary.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "Migration task ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "execute_migration_item",
+                        "description": "Execute a single migration item (create object in target database).",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "item_id": {"type": "integer", "description": "Migration item ID"}
+                            },
+                            "required": ["item_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "execute_migration_batch",
+                        "description": "Execute multiple pending migration items in batch.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "Migration task ID"},
+                                "batch_size": {"type": "integer", "description": "Number of items to execute, default 10"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "compare_databases",
+                        "description": "Compare source and target databases to verify migration results.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "Migration task ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "generate_migration_report",
+                        "description": "Generate detailed migration report with statistics and any errors.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "Migration task ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "skip_migration_item",
+                        "description": "Skip a migration item (mark as skipped).",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "item_id": {"type": "integer", "description": "Migration item ID"},
+                                "reason": {"type": "string", "description": "Reason for skipping"}
+                            },
+                            "required": ["item_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "retry_failed_items",
+                        "description": "Retry all failed migration items.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "Migration task ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
                 }
             ]
         else:
@@ -918,6 +1130,153 @@ Remember: You are the user's database assistant, helping them directly operate t
                             "required": ["table_name"]
                         }
                     }
+                },
+                # 迁移工具
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "analyze_source_database",
+                        "description": "分析源数据库，获取所有对象（表、索引、视图、序列、存储过程等）及其依赖关系，用于迁移计划制定。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "source_connection_name": {"type": "string", "description": "源数据库连接名称"},
+                                "schema": {"type": "string", "description": "要分析的schema（可选）"},
+                                "object_types": {"type": "array", "items": {"type": "string"}, "description": "要包含的对象类型：table、view、index、sequence、procedure、function、trigger、constraint"}
+                            },
+                            "required": ["source_connection_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "create_migration_plan",
+                        "description": "根据对象依赖关系创建迁移计划，确定执行顺序，生成转换后的DDL。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "迁移任务ID"},
+                                "source_connection_name": {"type": "string", "description": "源数据库连接名称"},
+                                "target_schema": {"type": "string", "description": "目标schema名称（可选）"}
+                            },
+                            "required": ["task_id", "source_connection_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_migration_plan",
+                        "description": "获取迁移计划详情，包括所有迁移项及其状态。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "迁移任务ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_migration_status",
+                        "description": "获取迁移任务状态和进度摘要。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "迁移任务ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "execute_migration_item",
+                        "description": "执行单个迁移项（在目标数据库中创建对象）。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "item_id": {"type": "integer", "description": "迁移项ID"}
+                            },
+                            "required": ["item_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "execute_migration_batch",
+                        "description": "批量执行待处理的迁移项。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "迁移任务ID"},
+                                "batch_size": {"type": "integer", "description": "每批执行数量，默认10"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "compare_databases",
+                        "description": "比对源库和目标库对象，验证迁移结果。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "迁移任务ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "generate_migration_report",
+                        "description": "生成详细的迁移报告，包括统计信息和错误详情。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "迁移任务ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "skip_migration_item",
+                        "description": "跳过某个迁移项（标记为已跳过）。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "item_id": {"type": "integer", "description": "迁移项ID"},
+                                "reason": {"type": "string", "description": "跳过原因"}
+                            },
+                            "required": ["item_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "retry_failed_items",
+                        "description": "重试所有失败的迁移项。",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "integer", "description": "迁移任务ID"}
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
                 }
             ]
 
@@ -981,6 +1340,27 @@ Remember: You are the user's database assistant, helping them directly operate t
                 result = self.db_tools.get_sample_data(**tool_input)
             elif tool_name == "get_running_queries":
                 result = self.db_tools.get_running_queries()
+            # Migration tools
+            elif tool_name == "analyze_source_database":
+                result = self._execute_analyze_source_database(**tool_input)
+            elif tool_name == "create_migration_plan":
+                result = self._execute_create_migration_plan(**tool_input)
+            elif tool_name == "get_migration_plan":
+                result = self._execute_get_migration_plan(**tool_input)
+            elif tool_name == "get_migration_status":
+                result = self._execute_get_migration_status(**tool_input)
+            elif tool_name == "execute_migration_item":
+                result = self._execute_migration_item(**tool_input)
+            elif tool_name == "execute_migration_batch":
+                result = self._execute_migration_batch(**tool_input)
+            elif tool_name == "compare_databases":
+                result = self._execute_compare_databases(**tool_input)
+            elif tool_name == "generate_migration_report":
+                result = self._execute_generate_migration_report(**tool_input)
+            elif tool_name == "skip_migration_item":
+                result = self._execute_skip_migration_item(**tool_input)
+            elif tool_name == "retry_failed_items":
+                result = self._execute_retry_failed_items(**tool_input)
             else:
                 result = {"status": "error", "error": t("db_unknown_tool", tool=tool_name)}
 
@@ -990,6 +1370,34 @@ Remember: You are the user's database assistant, helping them directly operate t
         except Exception as e:
             logger.error(f"工具执行异常: {e}")
             return {"status": "error", "error": str(e)}
+
+    # ==================== Interrupt Control Methods ====================
+
+    def request_interrupt(self):
+        """请求中断当前操作"""
+        self._interrupt_requested = True
+
+    def clear_interrupt(self):
+        """清除中断标志"""
+        self._interrupt_requested = False
+
+    def is_interrupt_requested(self) -> bool:
+        """检查是否请求了中断"""
+        return self._interrupt_requested
+
+    def has_interrupted_task(self) -> bool:
+        """检查是否有被打断的任务"""
+        return self._interrupted_state is not None
+
+    def get_interrupted_state(self) -> Dict[str, Any]:
+        """获取被打断的状态"""
+        return self._interrupted_state
+
+    def clear_interrupted_state(self):
+        """清除被打断的状态"""
+        self._interrupted_state = None
+
+    # ==================== Pending Operations Methods ====================
 
     def has_pending_operations(self) -> bool:
         """检查是否有待确认的操作"""
@@ -1044,7 +1452,8 @@ Remember: You are the user's database assistant, helping them directly operate t
         """清空所有待确认的操作"""
         self.pending_operations = []
 
-    def chat(self, user_message: str, max_iterations: int = 30, on_thinking: callable = None) -> str:
+    def chat(self, user_message: str, max_iterations: int = 30,
+             on_thinking: callable = None) -> str:
         """
         与AI Agent对话
 
@@ -1054,26 +1463,63 @@ Remember: You are the user's database assistant, helping them directly operate t
             on_thinking: 思考过程回调函数，接收(event_type, data)参数
 
         Returns:
-            Agent的响应
+            Agent的响应，如果被中断返回 None
         """
         def notify(event_type: str, data: Any = None):
             if on_thinking:
                 on_thinking(event_type, data)
 
+        # 清除中断标志
+        self._interrupt_requested = False
+
         # 清空待确认操作队列
         self.pending_operations = []
 
-        # 添加用户消息到历史
-        self.conversation_history.append({
-            "role": "user",
-            "content": user_message
-        })
+        # 如果有被打断的任务，添加上下文让AI判断用户意图
+        if self._interrupted_state:
+            state = self._interrupted_state
+            self._interrupted_state = None
+
+            # 构建上下文提示
+            context_hint = t("interrupted_context_hint")
+            full_message = f"[{context_hint}]\n{user_message}"
+
+            self.conversation_history.append({
+                "role": "user",
+                "content": full_message
+            })
+            self._save_message("user", content=full_message)
+        else:
+            # 正常开始新对话
+            self.conversation_history.append({
+                "role": "user",
+                "content": user_message
+            })
+            self._save_message("user", content=user_message)
 
         iteration = 0
+        original_message = user_message
 
         while iteration < max_iterations:
             iteration += 1
+
+            # 检查是否请求中断
+            if self._interrupt_requested:
+                self._interrupted_state = {
+                    "iteration": iteration - 1,  # 保存当前迭代位置
+                    "original_message": original_message,
+                }
+                self._interrupt_requested = False
+                logger.info("对话被用户中断")
+                return None  # 返回 None 表示被中断
+
             notify("thinking", t("agent_thinking", iteration=iteration))
+
+            # 检查是否需要压缩上下文
+            if self.context_compressor.needs_compression(
+                self.system_prompt, self.conversation_history
+            ):
+                self._compress_context()
 
             # 构建消息列表(包含system消息)
             messages = [{"role": "system", "content": self.system_prompt}] + self.conversation_history
@@ -1088,24 +1534,37 @@ Remember: You are the user's database assistant, helping them directly operate t
             # 检查是否需要调用工具
             if finish_reason == "tool_calls" and tool_calls:
                 # 添加assistant消息(包含tool_calls)
+                tool_calls_formatted = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["arguments"], ensure_ascii=False)
+                        }
+                    }
+                    for tc in tool_calls
+                ]
                 self.conversation_history.append({
                     "role": "assistant",
                     "content": content,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["arguments"], ensure_ascii=False)
-                            }
-                        }
-                        for tc in tool_calls
-                    ]
+                    "tool_calls": tool_calls_formatted
                 })
+                # Save assistant message with tool calls to database
+                self._save_message("assistant", content=content, tool_calls=tool_calls_formatted)
 
                 # 执行所有工具调用
                 for tc in tool_calls:
+                    # 在执行工具前检查中断
+                    if self._interrupt_requested:
+                        self._interrupted_state = {
+                            "iteration": iteration,
+                            "original_message": original_message,
+                        }
+                        self._interrupt_requested = False
+                        logger.info("对话在工具执行期间被用户中断")
+                        return None
+
                     tool_name = tc["name"]
                     tool_input = tc["arguments"]
 
@@ -1119,11 +1578,28 @@ Remember: You are the user's database assistant, helping them directly operate t
                     notify("tool_result", {"name": tool_name, "result": result})
 
                     # 添加工具结果到历史
+                    tool_result_content = json.dumps(result, ensure_ascii=False, default=str)
                     self.conversation_history.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
-                        "content": json.dumps(result, ensure_ascii=False, default=str)
+                        "content": tool_result_content
                     })
+                    # Save tool message to database
+                    self._save_message("tool", content=tool_result_content, tool_call_id=tc["id"])
+
+                    # 检查是否有待确认操作，如果有则立即返回，等待用户确认
+                    if result.get("status") in ("pending_confirmation", "pending_performance_confirmation"):
+                        return content or t("db_pending_confirmation_waiting")
+
+                    # 在工具执行后再次检查中断
+                    if self._interrupt_requested:
+                        self._interrupted_state = {
+                            "iteration": iteration,
+                            "original_message": original_message,
+                        }
+                        self._interrupt_requested = False
+                        logger.info("对话在工具执行后被用户中断")
+                        return None
 
             elif finish_reason == "stop":
                 # 对话结束
@@ -1134,6 +1610,8 @@ Remember: You are the user's database assistant, helping them directly operate t
                     "role": "assistant",
                     "content": text_response
                 })
+                # Save assistant response to database
+                self._save_message("assistant", content=text_response)
 
                 return text_response
 
@@ -1151,7 +1629,936 @@ Remember: You are the user's database assistant, helping them directly operate t
         """重置对话历史"""
         logger.info("重置对话历史")
         self.conversation_history = []
+        # Also clear from database if session is set
+        if self.storage and self.session_id:
+            self.storage.clear_session_messages(self.session_id)
 
     def get_conversation_history(self) -> List[Dict[str, Any]]:
         """获取对话历史"""
         return self.conversation_history
+
+    # ==================== Session Management Methods ====================
+
+    def set_session(self, session_id: int, restore_history: bool = True):
+        """
+        设置当前会话并可选恢复历史
+
+        Args:
+            session_id: Session ID
+            restore_history: Whether to restore conversation history from database
+        """
+        self.session_id = session_id
+        if restore_history:
+            self._restore_conversation_history()
+
+    def _restore_conversation_history(self):
+        """从数据库恢复聊天历史"""
+        if not self.storage or not self.session_id:
+            return
+
+        messages = self.storage.get_session_messages(self.session_id)
+        self.conversation_history = []
+
+        for msg in messages:
+            history_msg = {
+                "role": msg.role,
+                "content": msg.content
+            }
+            # Restore tool_calls for assistant messages
+            if msg.tool_calls:
+                try:
+                    history_msg["tool_calls"] = json.loads(msg.tool_calls)
+                except json.JSONDecodeError:
+                    pass
+            # Restore tool_call_id for tool messages
+            if msg.tool_call_id:
+                history_msg["tool_call_id"] = msg.tool_call_id
+
+            self.conversation_history.append(history_msg)
+
+        logger.info(f"恢复了 {len(self.conversation_history)} 条历史消息")
+
+    def _save_message(self, role: str, content: str = None,
+                      tool_calls: List[Dict] = None, tool_call_id: str = None):
+        """
+        保存消息到数据库
+
+        Args:
+            role: Message role ("user", "assistant", "tool")
+            content: Message content
+            tool_calls: Tool calls list (for assistant messages)
+            tool_call_id: Tool call ID (for tool messages)
+        """
+        if not self.storage or not self.session_id:
+            return
+
+        tool_calls_json = None
+        if tool_calls:
+            tool_calls_json = json.dumps(tool_calls, ensure_ascii=False)
+
+        self.storage.add_message(
+            session_id=self.session_id,
+            role=role,
+            content=content,
+            tool_calls=tool_calls_json,
+            tool_call_id=tool_call_id
+        )
+
+    def _compress_context(self):
+        """压缩对话上下文"""
+        logger.info(t("agent_compressing_context"))
+
+        compressed, info = self.context_compressor.compress(
+            self.system_prompt,
+            self.conversation_history,
+            self.language
+        )
+
+        if info.get("compressed"):
+            # 保存摘要到数据库
+            if self.storage and self.session_id:
+                summary_msg = compressed[0]  # 第一条是摘要消息
+                self.storage.save_context_summary(
+                    session_id=self.session_id,
+                    summary_text=summary_msg["content"],
+                    messages_count=info["messages_compressed"],
+                    original_tokens=info["original_tokens"],
+                    compressed_tokens=info["compressed_tokens"]
+                )
+                # 删除已压缩的消息
+                self.storage.delete_oldest_messages(
+                    self.session_id,
+                    info["messages_compressed"]
+                )
+                # 保存摘要消息到数据库
+                self._save_message("assistant", content=summary_msg["content"])
+
+            # 更新内存中的历史
+            self.conversation_history = compressed
+
+            logger.info(
+                f"上下文已压缩: {info['messages_compressed']} 条消息, "
+                f"{info['original_tokens']} -> {info['compressed_tokens']} tokens"
+            )
+
+    # ==================== Migration Tool Implementations ====================
+
+    def _execute_analyze_source_database(self, source_connection_name: str,
+                                          schema: str = None,
+                                          object_types: List[str] = None,
+                                          **kwargs) -> Dict[str, Any]:
+        """Analyze source database for migration"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        # Get source connection
+        source_conn = self.storage.get_connection(source_connection_name)
+        if not source_conn:
+            return {"status": "error", "error": t("migration_source_not_found", name=source_connection_name)}
+
+        try:
+            # Decrypt password and create source db tools
+            from db_agent.storage.encryption import decrypt
+            password = decrypt(source_conn.password_encrypted)
+            source_config = {
+                "type": source_conn.db_type,
+                "host": source_conn.host,
+                "port": source_conn.port,
+                "database": source_conn.database,
+                "user": source_conn.username,
+                "password": password
+            }
+            source_tools = DatabaseToolsFactory.create(source_conn.db_type, source_config)
+
+            # Get all objects
+            objects_result = source_tools.get_all_objects(schema=schema, object_types=object_types)
+            if objects_result.get("status") == "error":
+                return objects_result
+
+            # Get FK dependencies for table ordering
+            fk_deps = source_tools.get_foreign_key_dependencies(schema=schema)
+
+            # Get object dependencies
+            obj_deps = source_tools.get_object_dependencies(schema=schema)
+
+            return {
+                "status": "success",
+                "source_connection": source_connection_name,
+                "source_db_type": source_conn.db_type,
+                "schema": schema or objects_result.get("schema"),
+                "objects": objects_result.get("objects", {}),
+                "total_count": objects_result.get("total_count", 0),
+                "table_order": fk_deps.get("table_order", []) if fk_deps.get("status") == "success" else [],
+                "foreign_keys": fk_deps.get("foreign_keys", []) if fk_deps.get("status") == "success" else [],
+                "dependencies": obj_deps.get("dependencies", []) if obj_deps.get("status") == "success" else []
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to analyze source database: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _execute_create_migration_plan(self, task_id: int,
+                                         source_connection_name: str,
+                                         target_schema: str = None,
+                                         **kwargs) -> Dict[str, Any]:
+        """Create migration plan with converted DDL"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        # Get task
+        task = self.storage.get_migration_task(task_id)
+        if not task:
+            return {"status": "error", "error": t("migration_task_not_found", id=task_id)}
+
+        # Get source connection
+        source_conn = self.storage.get_connection(source_connection_name)
+        if not source_conn:
+            return {"status": "error", "error": t("migration_source_not_found", name=source_connection_name)}
+
+        try:
+            # Create source db tools
+            from db_agent.storage.encryption import decrypt
+            password = decrypt(source_conn.password_encrypted)
+            source_config = {
+                "type": source_conn.db_type,
+                "host": source_conn.host,
+                "port": source_conn.port,
+                "database": source_conn.database,
+                "user": source_conn.username,
+                "password": password
+            }
+            source_tools = DatabaseToolsFactory.create(source_conn.db_type, source_config)
+
+            # Get objects and dependencies
+            objects_result = source_tools.get_all_objects(schema=task.source_schema)
+            fk_deps = source_tools.get_foreign_key_dependencies(schema=task.source_schema)
+
+            if objects_result.get("status") == "error":
+                return objects_result
+
+            objects = objects_result.get("objects", {})
+            table_order = fk_deps.get("table_order", []) if fk_deps.get("status") == "success" else []
+
+            # Build migration items
+            items = []
+            execution_order = 0
+
+            # 1. Sequences first
+            for seq in objects.get("sequences", []):
+                execution_order += 1
+                ddl_result = source_tools.get_object_ddl("sequence", seq["name"], task.source_schema)
+                items.append(MigrationItem(
+                    id=None,
+                    task_id=task_id,
+                    object_type="sequence",
+                    object_name=seq["name"],
+                    schema_name=task.source_schema,
+                    execution_order=execution_order,
+                    depends_on=None,
+                    status="pending",
+                    source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                    target_ddl=None,  # Will be converted later
+                    conversion_notes=None,
+                    execution_result=None,
+                    error_message=None,
+                    retry_count=0,
+                    executed_at=None,
+                    created_at=None,
+                    updated_at=None
+                ))
+
+            # 2. Tables in dependency order
+            tables_added = set()
+            for table_name in table_order:
+                if table_name not in tables_added:
+                    execution_order += 1
+                    ddl_result = source_tools.get_object_ddl("table", table_name, task.source_schema)
+                    deps = ddl_result.get("dependencies", []) if ddl_result.get("status") == "success" else []
+                    items.append(MigrationItem(
+                        id=None,
+                        task_id=task_id,
+                        object_type="table",
+                        object_name=table_name,
+                        schema_name=task.source_schema,
+                        execution_order=execution_order,
+                        depends_on=json.dumps([d["name"] for d in deps]) if deps else None,
+                        status="pending",
+                        source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                        target_ddl=None,
+                        conversion_notes=None,
+                        execution_result=None,
+                        error_message=None,
+                        retry_count=0,
+                        executed_at=None,
+                        created_at=None,
+                        updated_at=None
+                    ))
+                    tables_added.add(table_name)
+
+            # Add remaining tables not in FK dependency list
+            for table in objects.get("tables", []):
+                if table["name"] not in tables_added:
+                    execution_order += 1
+                    ddl_result = source_tools.get_object_ddl("table", table["name"], task.source_schema)
+                    items.append(MigrationItem(
+                        id=None,
+                        task_id=task_id,
+                        object_type="table",
+                        object_name=table["name"],
+                        schema_name=task.source_schema,
+                        execution_order=execution_order,
+                        depends_on=None,
+                        status="pending",
+                        source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                        target_ddl=None,
+                        conversion_notes=None,
+                        execution_result=None,
+                        error_message=None,
+                        retry_count=0,
+                        executed_at=None,
+                        created_at=None,
+                        updated_at=None
+                    ))
+
+            # 3. Indexes (excluding primary keys which are created with tables)
+            for idx in objects.get("indexes", []):
+                if not idx.get("is_primary"):
+                    execution_order += 1
+                    ddl_result = source_tools.get_object_ddl("index", idx["name"], task.source_schema)
+                    items.append(MigrationItem(
+                        id=None,
+                        task_id=task_id,
+                        object_type="index",
+                        object_name=idx["name"],
+                        schema_name=task.source_schema,
+                        execution_order=execution_order,
+                        depends_on=json.dumps([idx.get("table_name")]) if idx.get("table_name") else None,
+                        status="pending",
+                        source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                        target_ddl=None,
+                        conversion_notes=None,
+                        execution_result=None,
+                        error_message=None,
+                        retry_count=0,
+                        executed_at=None,
+                        created_at=None,
+                        updated_at=None
+                    ))
+
+            # 4. Views
+            for view in objects.get("views", []):
+                execution_order += 1
+                ddl_result = source_tools.get_object_ddl("view", view["name"], task.source_schema)
+                items.append(MigrationItem(
+                    id=None,
+                    task_id=task_id,
+                    object_type="view",
+                    object_name=view["name"],
+                    schema_name=task.source_schema,
+                    execution_order=execution_order,
+                    depends_on=None,
+                    status="pending",
+                    source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                    target_ddl=None,
+                    conversion_notes=None,
+                    execution_result=None,
+                    error_message=None,
+                    retry_count=0,
+                    executed_at=None,
+                    created_at=None,
+                    updated_at=None
+                ))
+
+            # 5. Functions
+            for func in objects.get("functions", []):
+                execution_order += 1
+                ddl_result = source_tools.get_object_ddl("function", func["name"], task.source_schema)
+                items.append(MigrationItem(
+                    id=None,
+                    task_id=task_id,
+                    object_type="function",
+                    object_name=func["name"],
+                    schema_name=task.source_schema,
+                    execution_order=execution_order,
+                    depends_on=None,
+                    status="pending",
+                    source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                    target_ddl=None,
+                    conversion_notes=None,
+                    execution_result=None,
+                    error_message=None,
+                    retry_count=0,
+                    executed_at=None,
+                    created_at=None,
+                    updated_at=None
+                ))
+
+            # 6. Procedures
+            for proc in objects.get("procedures", []):
+                execution_order += 1
+                ddl_result = source_tools.get_object_ddl("procedure", proc["name"], task.source_schema)
+                items.append(MigrationItem(
+                    id=None,
+                    task_id=task_id,
+                    object_type="procedure",
+                    object_name=proc["name"],
+                    schema_name=task.source_schema,
+                    execution_order=execution_order,
+                    depends_on=None,
+                    status="pending",
+                    source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                    target_ddl=None,
+                    conversion_notes=None,
+                    execution_result=None,
+                    error_message=None,
+                    retry_count=0,
+                    executed_at=None,
+                    created_at=None,
+                    updated_at=None
+                ))
+
+            # 7. Triggers
+            for trigger in objects.get("triggers", []):
+                execution_order += 1
+                ddl_result = source_tools.get_object_ddl("trigger", trigger["name"], task.source_schema)
+                items.append(MigrationItem(
+                    id=None,
+                    task_id=task_id,
+                    object_type="trigger",
+                    object_name=trigger["name"],
+                    schema_name=task.source_schema,
+                    execution_order=execution_order,
+                    depends_on=json.dumps([trigger.get("table_name")]) if trigger.get("table_name") else None,
+                    status="pending",
+                    source_ddl=ddl_result.get("ddl") if ddl_result.get("status") == "success" else None,
+                    target_ddl=None,
+                    conversion_notes=None,
+                    execution_result=None,
+                    error_message=None,
+                    retry_count=0,
+                    executed_at=None,
+                    created_at=None,
+                    updated_at=None
+                ))
+
+            # Save items to database
+            if items:
+                self.storage.add_migration_items_batch(items)
+
+            # Update task
+            self.storage.update_migration_task_status(task_id, "planning")
+            self.storage.update_migration_task_analysis(
+                task_id,
+                json.dumps({"objects": {k: len(v) for k, v in objects.items()}}),
+                len(items)
+            )
+
+            return {
+                "status": "success",
+                "task_id": task_id,
+                "total_items": len(items),
+                "items_by_type": {
+                    "sequences": len([i for i in items if i.object_type == "sequence"]),
+                    "tables": len([i for i in items if i.object_type == "table"]),
+                    "indexes": len([i for i in items if i.object_type == "index"]),
+                    "views": len([i for i in items if i.object_type == "view"]),
+                    "functions": len([i for i in items if i.object_type == "function"]),
+                    "procedures": len([i for i in items if i.object_type == "procedure"]),
+                    "triggers": len([i for i in items if i.object_type == "trigger"])
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to create migration plan: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _execute_get_migration_plan(self, task_id: int, **kwargs) -> Dict[str, Any]:
+        """Get migration plan details"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        task = self.storage.get_migration_task(task_id)
+        if not task:
+            return {"status": "error", "error": t("migration_task_not_found", id=task_id)}
+
+        items = self.storage.get_migration_items(task_id)
+
+        return {
+            "status": "success",
+            "task": task.to_dict(),
+            "items": [item.to_dict() for item in items],
+            "summary": {
+                "total": len(items),
+                "pending": len([i for i in items if i.status == "pending"]),
+                "completed": len([i for i in items if i.status == "completed"]),
+                "failed": len([i for i in items if i.status == "failed"]),
+                "skipped": len([i for i in items if i.status == "skipped"])
+            }
+        }
+
+    def _execute_get_migration_status(self, task_id: int, **kwargs) -> Dict[str, Any]:
+        """Get migration status summary"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        summary = self.storage.get_migration_summary(task_id)
+        if not summary:
+            return {"status": "error", "error": t("migration_task_not_found", id=task_id)}
+
+        return {"status": "success", **summary}
+
+    def _convert_ddl(self, source_ddl: str, source_type: str, target_type: str, object_type: str) -> Dict[str, Any]:
+        """
+        Convert DDL from source database type to target database type.
+        Returns dict with 'ddl' and 'notes' keys.
+        """
+        if not source_ddl:
+            return {"ddl": None, "notes": "No source DDL"}
+
+        if source_type == target_type:
+            return {"ddl": source_ddl, "notes": "Same database type, no conversion needed"}
+
+        ddl = source_ddl
+        notes = []
+
+        # MySQL to PostgreSQL conversion
+        if source_type == "mysql" and target_type == "postgresql":
+            import re
+
+            # Data type conversions
+            type_mappings = [
+                (r'\bINT\s+AUTO_INCREMENT\b', 'SERIAL', 'INT AUTO_INCREMENT → SERIAL'),
+                (r'\bBIGINT\s+AUTO_INCREMENT\b', 'BIGSERIAL', 'BIGINT AUTO_INCREMENT → BIGSERIAL'),
+                (r'\bSMALLINT\s+AUTO_INCREMENT\b', 'SMALLSERIAL', 'SMALLINT AUTO_INCREMENT → SMALLSERIAL'),
+                (r'\bINT\b(?!\s*\()', 'INTEGER', 'INT → INTEGER'),
+                (r'\bTINYINT\s*\(\s*1\s*\)', 'BOOLEAN', 'TINYINT(1) → BOOLEAN'),
+                (r'\bTINYINT\b', 'SMALLINT', 'TINYINT → SMALLINT'),
+                (r'\bMEDIUMINT\b', 'INTEGER', 'MEDIUMINT → INTEGER'),
+                (r'\bDOUBLE\b(?!\s+PRECISION)', 'DOUBLE PRECISION', 'DOUBLE → DOUBLE PRECISION'),
+                (r'\bFLOAT\b', 'REAL', 'FLOAT → REAL'),
+                (r'\bDATETIME\b', 'TIMESTAMP', 'DATETIME → TIMESTAMP'),
+                (r'\bTIMESTAMP\s+DEFAULT\s+CURRENT_TIMESTAMP\s+ON\s+UPDATE\s+CURRENT_TIMESTAMP\b',
+                 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'Removed ON UPDATE (use trigger in PG)'),
+                (r'\bLONGTEXT\b', 'TEXT', 'LONGTEXT → TEXT'),
+                (r'\bMEDIUMTEXT\b', 'TEXT', 'MEDIUMTEXT → TEXT'),
+                (r'\bTINYTEXT\b', 'TEXT', 'TINYTEXT → TEXT'),
+                (r'\bLONGBLOB\b', 'BYTEA', 'LONGBLOB → BYTEA'),
+                (r'\bMEDIUMBLOB\b', 'BYTEA', 'MEDIUMBLOB → BYTEA'),
+                (r'\bTINYBLOB\b', 'BYTEA', 'TINYBLOB → BYTEA'),
+                (r'\bBLOB\b', 'BYTEA', 'BLOB → BYTEA'),
+                (r'\bVARBINARY\s*\([^)]+\)', 'BYTEA', 'VARBINARY → BYTEA'),
+                (r'\bBINARY\s*\([^)]+\)', 'BYTEA', 'BINARY → BYTEA'),
+                (r'\bJSON\b', 'JSONB', 'JSON → JSONB'),
+            ]
+
+            for pattern, replacement, note in type_mappings:
+                if re.search(pattern, ddl, re.IGNORECASE):
+                    ddl = re.sub(pattern, replacement, ddl, flags=re.IGNORECASE)
+                    notes.append(note)
+
+            # Remove MySQL-specific clauses
+            mysql_clauses = [
+                (r'\s+ENGINE\s*=\s*\w+', '', 'Removed ENGINE clause'),
+                (r'\s+DEFAULT\s+CHARSET\s*=\s*\w+', '', 'Removed CHARSET clause'),
+                (r'\s+COLLATE\s*=?\s*\w+', '', 'Removed COLLATE clause'),
+                (r'\s+AUTO_INCREMENT\s*=\s*\d+', '', 'Removed AUTO_INCREMENT value'),
+                (r'\s+ROW_FORMAT\s*=\s*\w+', '', 'Removed ROW_FORMAT'),
+                (r'\s+COMMENT\s*=?\s*\'[^\']*\'', '', 'Removed table COMMENT'),
+                (r'\s+UNSIGNED\b', '', 'Removed UNSIGNED (not in PostgreSQL)'),
+                (r'\s+ZEROFILL\b', '', 'Removed ZEROFILL'),
+                (r'\bIF\s+NOT\s+EXISTS\s+', '', 'Removed IF NOT EXISTS'),
+            ]
+
+            for pattern, replacement, note in mysql_clauses:
+                if re.search(pattern, ddl, re.IGNORECASE):
+                    ddl = re.sub(pattern, replacement, ddl, flags=re.IGNORECASE)
+                    notes.append(note)
+
+            # Handle ENUM - convert to VARCHAR with CHECK constraint (simplified)
+            enum_pattern = r"ENUM\s*\(([^)]+)\)"
+            if re.search(enum_pattern, ddl, re.IGNORECASE):
+                ddl = re.sub(enum_pattern, "VARCHAR(50)", ddl, flags=re.IGNORECASE)
+                notes.append("ENUM → VARCHAR(50) (consider adding CHECK constraint)")
+
+            # Handle column comments - remove inline COMMENT
+            ddl = re.sub(r"\s+COMMENT\s+'[^']*'", "", ddl, flags=re.IGNORECASE)
+
+            # Handle GENERATED columns (MySQL syntax differs)
+            ddl = re.sub(r'\s+GENERATED\s+ALWAYS\s+AS\s+\(([^)]+)\)\s+STORED',
+                        r' GENERATED ALWAYS AS (\1) STORED', ddl, flags=re.IGNORECASE)
+
+            # Handle index syntax differences for CREATE INDEX
+            if object_type == "index":
+                # Remove USING BTREE if present (BTREE is default in PG)
+                ddl = re.sub(r'\s+USING\s+BTREE\b', '', ddl, flags=re.IGNORECASE)
+                # Handle USING HASH
+                if re.search(r'\bUSING\s+HASH\b', ddl, re.IGNORECASE):
+                    notes.append("HASH index may behave differently in PostgreSQL")
+
+            # Handle FULLTEXT indexes - not directly supported in PG
+            if 'FULLTEXT' in ddl.upper():
+                notes.append("FULLTEXT index not supported - consider using GIN/GiST with tsvector")
+                return {"ddl": None, "notes": "; ".join(notes), "skip_reason": "FULLTEXT index not supported in PostgreSQL"}
+
+        # MySQL to GaussDB (similar to PostgreSQL with some differences)
+        elif source_type == "mysql" and target_type == "gaussdb":
+            # GaussDB is PostgreSQL-compatible, use same rules
+            result = self._convert_ddl(source_ddl, "mysql", "postgresql", object_type)
+            result["notes"] = result.get("notes", "") + " (GaussDB compatibility mode)"
+            return result
+
+        # Oracle to PostgreSQL
+        elif source_type == "oracle" and target_type == "postgresql":
+            import re
+
+            type_mappings = [
+                (r'\bNUMBER\s*\(\s*10\s*\)', 'INTEGER', 'NUMBER(10) → INTEGER'),
+                (r'\bNUMBER\s*\(\s*19\s*\)', 'BIGINT', 'NUMBER(19) → BIGINT'),
+                (r'\bNUMBER\s*\((\d+)\s*,\s*(\d+)\s*\)', r'NUMERIC(\1,\2)', 'NUMBER(p,s) → NUMERIC(p,s)'),
+                (r'\bNUMBER\b', 'NUMERIC', 'NUMBER → NUMERIC'),
+                (r'\bVARCHAR2\s*\((\d+)\)', r'VARCHAR(\1)', 'VARCHAR2 → VARCHAR'),
+                (r'\bNVARCHAR2\s*\((\d+)\)', r'VARCHAR(\1)', 'NVARCHAR2 → VARCHAR'),
+                (r'\bCLOB\b', 'TEXT', 'CLOB → TEXT'),
+                (r'\bNCLOB\b', 'TEXT', 'NCLOB → TEXT'),
+                (r'\bBLOB\b', 'BYTEA', 'BLOB → BYTEA'),
+                (r'\bRAW\s*\(\d+\)', 'BYTEA', 'RAW → BYTEA'),
+                (r'\bSYSDATE\b', 'CURRENT_TIMESTAMP', 'SYSDATE → CURRENT_TIMESTAMP'),
+                (r'\bSYSTIMESTAMP\b', 'CURRENT_TIMESTAMP', 'SYSTIMESTAMP → CURRENT_TIMESTAMP'),
+            ]
+
+            for pattern, replacement, note in type_mappings:
+                if re.search(pattern, ddl, re.IGNORECASE):
+                    ddl = re.sub(pattern, replacement, ddl, flags=re.IGNORECASE)
+                    notes.append(note)
+
+        # Other conversions can be added here...
+
+        return {"ddl": ddl.strip(), "notes": "; ".join(notes) if notes else "Basic conversion applied"}
+
+    def _execute_migration_item(self, item_id: int, **kwargs) -> Dict[str, Any]:
+        """Execute a single migration item"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        item = self.storage.get_migration_item(item_id)
+        if not item:
+            return {"status": "error", "error": t("migration_item_not_found", id=item_id)}
+
+        # Get task to know source/target types
+        task = self.storage.get_migration_task(item.task_id)
+        if not task:
+            return {"status": "error", "error": t("migration_task_not_found", task_id=item.task_id)}
+
+        # Update item status to executing
+        self.storage.update_migration_item_status(item_id, "executing")
+
+        try:
+            # Convert DDL if needed
+            if item.target_ddl:
+                ddl = item.target_ddl
+            elif item.source_ddl:
+                # Convert source DDL to target format
+                conversion = self._convert_ddl(
+                    item.source_ddl,
+                    task.source_db_type,
+                    task.target_db_type,
+                    item.object_type
+                )
+
+                if conversion.get("skip_reason"):
+                    # Item should be skipped
+                    self.storage.update_migration_item_status(
+                        item_id, "skipped",
+                        conversion.get("skip_reason")
+                    )
+                    # Save conversion notes
+                    if conversion.get("notes"):
+                        self.storage.update_migration_item_ddl(
+                            item_id,
+                            conversion_notes=conversion.get("notes")
+                        )
+                    if task:
+                        self.storage.update_migration_task_progress(
+                            item.task_id,
+                            skipped=task.skipped_items + 1
+                        )
+                    return {
+                        "status": "skipped",
+                        "item_id": item_id,
+                        "object_type": item.object_type,
+                        "object_name": item.object_name,
+                        "reason": conversion.get("skip_reason"),
+                        "notes": conversion.get("notes")
+                    }
+
+                ddl = conversion.get("ddl")
+                if conversion.get("notes"):
+                    self.storage.update_migration_item_ddl(
+                        item_id,
+                        target_ddl=ddl,
+                        conversion_notes=conversion.get("notes")
+                    )
+            else:
+                ddl = None
+
+            if not ddl:
+                self.storage.update_migration_item_status(item_id, "failed", "No DDL available")
+                return {"status": "error", "error": "No DDL available for this item"}
+
+            # Execute DDL on target database
+            result = self.db_tools.execute_sql(ddl, confirmed=True)
+
+            if result.get("status") == "success":
+                self.storage.update_migration_item_status(
+                    item_id, "completed",
+                    execution_result=json.dumps(result)
+                )
+
+                # Update task progress
+                task = self.storage.get_migration_task(item.task_id)
+                if task:
+                    self.storage.update_migration_task_progress(
+                        item.task_id,
+                        completed=task.completed_items + 1
+                    )
+
+                return {
+                    "status": "success",
+                    "item_id": item_id,
+                    "object_type": item.object_type,
+                    "object_name": item.object_name,
+                    "result": result
+                }
+            else:
+                error_msg = result.get("error", "Unknown error")
+                self.storage.update_migration_item_status(item_id, "failed", error_msg)
+
+                # Update task progress
+                task = self.storage.get_migration_task(item.task_id)
+                if task:
+                    self.storage.update_migration_task_progress(
+                        item.task_id,
+                        failed=task.failed_items + 1
+                    )
+
+                return {
+                    "status": "error",
+                    "item_id": item_id,
+                    "object_type": item.object_type,
+                    "object_name": item.object_name,
+                    "error": error_msg
+                }
+
+        except Exception as e:
+            error_msg = str(e)
+            self.storage.update_migration_item_status(item_id, "failed", error_msg)
+            return {"status": "error", "error": error_msg}
+
+    def _execute_migration_batch(self, task_id: int, batch_size: int = 10, **kwargs) -> Dict[str, Any]:
+        """Execute migration items in batch"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        results = []
+        completed = 0
+        failed = 0
+
+        # Update task status to executing
+        self.storage.update_migration_task_status(task_id, "executing")
+
+        for _ in range(batch_size):
+            item = self.storage.get_next_pending_item(task_id)
+            if not item:
+                break
+
+            result = self._execute_migration_item(item.id)
+            results.append({
+                "item_id": item.id,
+                "object_type": item.object_type,
+                "object_name": item.object_name,
+                "status": result.get("status")
+            })
+
+            if result.get("status") == "success":
+                completed += 1
+            else:
+                failed += 1
+
+        # Check if all items are done
+        summary = self.storage.get_migration_summary(task_id)
+        if summary and summary.get("status_counts", {}).get("pending", 0) == 0:
+            final_status = "completed" if summary.get("failed_items", 0) == 0 else "completed"
+            self.storage.update_migration_task_status(task_id, final_status)
+
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "batch_completed": completed,
+            "batch_failed": failed,
+            "results": results
+        }
+
+    def _execute_compare_databases(self, task_id: int, **kwargs) -> Dict[str, Any]:
+        """Compare source and target databases"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        task = self.storage.get_migration_task(task_id)
+        if not task:
+            return {"status": "error", "error": t("migration_task_not_found", id=task_id)}
+
+        try:
+            # Get source connection
+            source_conn = self.storage.get_connection_by_id(task.source_connection_id)
+            target_conn = self.storage.get_connection_by_id(task.target_connection_id)
+
+            if not source_conn or not target_conn:
+                return {"status": "error", "error": "Connection not found"}
+
+            # Create source tools
+            from db_agent.storage.encryption import decrypt
+            source_password = decrypt(source_conn.password_encrypted)
+            source_config = {
+                "type": source_conn.db_type,
+                "host": source_conn.host,
+                "port": source_conn.port,
+                "database": source_conn.database,
+                "user": source_conn.username,
+                "password": source_password
+            }
+            source_tools = DatabaseToolsFactory.create(source_conn.db_type, source_config)
+
+            # Get objects from both databases
+            source_objects = source_tools.get_all_objects(schema=task.source_schema)
+            target_objects = self.db_tools.get_all_objects(schema=task.target_schema)
+
+            # Compare
+            comparison = {"matches": [], "missing_in_target": [], "extra_in_target": []}
+
+            source_tables = {t["name"] for t in source_objects.get("objects", {}).get("tables", [])}
+            target_tables = {t["name"] for t in target_objects.get("objects", {}).get("tables", [])}
+
+            comparison["matches"] = list(source_tables & target_tables)
+            comparison["missing_in_target"] = list(source_tables - target_tables)
+            comparison["extra_in_target"] = list(target_tables - source_tables)
+
+            return {
+                "status": "success",
+                "task_id": task_id,
+                "source_db": source_conn.db_type,
+                "target_db": target_conn.db_type,
+                "comparison": comparison,
+                "summary": {
+                    "total_source_tables": len(source_tables),
+                    "total_target_tables": len(target_tables),
+                    "matched": len(comparison["matches"]),
+                    "missing": len(comparison["missing_in_target"]),
+                    "extra": len(comparison["extra_in_target"])
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to compare databases: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _execute_generate_migration_report(self, task_id: int, **kwargs) -> Dict[str, Any]:
+        """Generate migration report"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        task = self.storage.get_migration_task(task_id)
+        if not task:
+            return {"status": "error", "error": t("migration_task_not_found", id=task_id)}
+
+        items = self.storage.get_migration_items(task_id)
+        summary = self.storage.get_migration_summary(task_id)
+
+        # Group items by status
+        items_by_status = {
+            "pending": [],
+            "completed": [],
+            "failed": [],
+            "skipped": []
+        }
+        for item in items:
+            if item.status in items_by_status:
+                items_by_status[item.status].append({
+                    "id": item.id,
+                    "type": item.object_type,
+                    "name": item.object_name,
+                    "error": item.error_message
+                })
+
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "task_name": task.name,
+            "source_db_type": task.source_db_type,
+            "target_db_type": task.target_db_type,
+            "task_status": task.status,
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "statistics": {
+                "total_items": task.total_items,
+                "completed": task.completed_items,
+                "failed": task.failed_items,
+                "skipped": task.skipped_items,
+                "pending": task.total_items - task.completed_items - task.failed_items - task.skipped_items
+            },
+            "items_by_type": summary.get("type_counts", {}) if summary else {},
+            "failed_items": items_by_status["failed"],
+            "skipped_items": items_by_status["skipped"]
+        }
+
+    def _execute_skip_migration_item(self, item_id: int, reason: str = None, **kwargs) -> Dict[str, Any]:
+        """Skip a migration item"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        item = self.storage.get_migration_item(item_id)
+        if not item:
+            return {"status": "error", "error": t("migration_item_not_found", id=item_id)}
+
+        self.storage.update_migration_item_status(item_id, "skipped", reason)
+
+        # Update task progress
+        task = self.storage.get_migration_task(item.task_id)
+        if task:
+            self.storage.update_migration_task_progress(
+                item.task_id,
+                skipped=task.skipped_items + 1
+            )
+
+        return {
+            "status": "success",
+            "item_id": item_id,
+            "object_type": item.object_type,
+            "object_name": item.object_name,
+            "reason": reason
+        }
+
+    def _execute_retry_failed_items(self, task_id: int, **kwargs) -> Dict[str, Any]:
+        """Retry all failed migration items"""
+        if not self.storage:
+            return {"status": "error", "error": t("migration_storage_required")}
+
+        failed_items = self.storage.get_migration_items(task_id, status="failed")
+        if not failed_items:
+            return {"status": "success", "message": "No failed items to retry", "retried": 0}
+
+        retried = 0
+        for item in failed_items:
+            self.storage.increment_migration_item_retry(item.id)
+            retried += 1
+
+        # Reset task failed count
+        task = self.storage.get_migration_task(task_id)
+        if task:
+            self.storage.update_migration_task_progress(task_id, failed=0)
+            self.storage.update_migration_task_status(task_id, "executing")
+
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "retried": retried
+        }

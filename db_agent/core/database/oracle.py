@@ -4,7 +4,7 @@ Supports Oracle 12c and above (12.1, 12.2, 18c, 19c, 21c, 23c)
 Note: Oracle 11g is not supported (requires Oracle Client installation)
 """
 import oracledb
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
 from db_agent.i18n import t
 from .base import BaseDatabaseTools
@@ -914,3 +914,366 @@ class OracleTools(BaseDatabaseTools):
             }
         finally:
             conn.close()
+
+    # ==================== Migration Support Methods ====================
+
+    def get_all_objects(self, schema: str = None, object_types: List[str] = None) -> Dict[str, Any]:
+        """Get all database objects for migration"""
+        schema = (schema or self._default_schema).upper()
+        logger.info(f"Getting all objects from schema: {schema}")
+
+        if object_types is None:
+            object_types = ["table", "view", "index", "sequence", "procedure", "function", "trigger", "constraint"]
+
+        result = {
+            "status": "success",
+            "schema": schema,
+            "objects": {}
+        }
+
+        # Use DBA views if accessible
+        tab_view = "DBA_TABLES" if self._has_dba_views else "ALL_TABLES"
+        obj_view = "DBA_OBJECTS" if self._has_dba_views else "ALL_OBJECTS"
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # Get tables
+            if "table" in object_types:
+                cur.execute(f"""
+                    SELECT table_name as name,
+                           owner as schema,
+                           num_rows as row_count,
+                           blocks * 8192 as size_bytes,
+                           tablespace_name,
+                           compression,
+                           partitioned
+                    FROM {tab_view}
+                    WHERE owner = :schema
+                    ORDER BY table_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["tables"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get views
+            if "view" in object_types:
+                view_view = "DBA_VIEWS" if self._has_dba_views else "ALL_VIEWS"
+                cur.execute(f"""
+                    SELECT view_name as name,
+                           owner as schema,
+                           text as definition
+                    FROM {view_view}
+                    WHERE owner = :schema
+                    ORDER BY view_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["views"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get indexes
+            if "index" in object_types:
+                idx_view = "DBA_INDEXES" if self._has_dba_views else "ALL_INDEXES"
+                cur.execute(f"""
+                    SELECT i.index_name as name,
+                           i.table_name,
+                           i.owner as schema,
+                           i.index_type,
+                           CASE WHEN i.uniqueness = 'UNIQUE' THEN 1 ELSE 0 END as is_unique,
+                           CASE WHEN c.constraint_type = 'P' THEN 1 ELSE 0 END as is_primary
+                    FROM {idx_view} i
+                    LEFT JOIN all_constraints c ON i.index_name = c.index_name AND i.owner = c.owner
+                    WHERE i.owner = :schema
+                    ORDER BY i.table_name, i.index_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["indexes"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get sequences
+            if "sequence" in object_types:
+                seq_view = "DBA_SEQUENCES" if self._has_dba_views else "ALL_SEQUENCES"
+                cur.execute(f"""
+                    SELECT sequence_name as name,
+                           sequence_owner as schema,
+                           min_value,
+                           max_value,
+                           increment_by,
+                           CASE WHEN cycle_flag = 'Y' THEN 1 ELSE 0 END as is_cycle,
+                           cache_size,
+                           last_number
+                    FROM {seq_view}
+                    WHERE sequence_owner = :schema
+                    ORDER BY sequence_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["sequences"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get procedures
+            if "procedure" in object_types:
+                cur.execute(f"""
+                    SELECT object_name as name,
+                           owner as schema,
+                           'procedure' as type,
+                           status
+                    FROM {obj_view}
+                    WHERE owner = :schema AND object_type = 'PROCEDURE'
+                    ORDER BY object_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["procedures"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get functions
+            if "function" in object_types:
+                cur.execute(f"""
+                    SELECT object_name as name,
+                           owner as schema,
+                           'function' as type,
+                           status
+                    FROM {obj_view}
+                    WHERE owner = :schema AND object_type = 'FUNCTION'
+                    ORDER BY object_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["functions"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get triggers
+            if "trigger" in object_types:
+                trig_view = "DBA_TRIGGERS" if self._has_dba_views else "ALL_TRIGGERS"
+                cur.execute(f"""
+                    SELECT trigger_name as name,
+                           table_name,
+                           owner as schema,
+                           trigger_type as timing,
+                           triggering_event as event,
+                           status
+                    FROM {trig_view}
+                    WHERE owner = :schema
+                    ORDER BY table_name, trigger_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["triggers"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get constraints
+            if "constraint" in object_types:
+                cur.execute("""
+                    SELECT constraint_name as name,
+                           table_name,
+                           owner as schema,
+                           constraint_type,
+                           search_condition as definition,
+                           r_constraint_name as referenced_constraint,
+                           status
+                    FROM all_constraints
+                    WHERE owner = :schema
+                    ORDER BY table_name, constraint_name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["constraints"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Calculate totals
+            total_count = sum(len(result["objects"].get(k, [])) for k in result["objects"])
+            result["total_count"] = total_count
+
+            logger.info(f"Found {total_count} total objects")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get all objects: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_ddl(self, object_type: str, object_name: str, schema: str = None) -> Dict[str, Any]:
+        """Get DDL for a specific database object using DBMS_METADATA"""
+        schema = (schema or self._default_schema).upper()
+        object_name = object_name.upper()
+        logger.info(f"Getting DDL for {object_type}: {schema}.{object_name}")
+
+        # Map object types to Oracle DBMS_METADATA object types
+        type_map = {
+            "table": "TABLE",
+            "view": "VIEW",
+            "index": "INDEX",
+            "sequence": "SEQUENCE",
+            "procedure": "PROCEDURE",
+            "function": "FUNCTION",
+            "trigger": "TRIGGER"
+        }
+
+        oracle_type = type_map.get(object_type.lower())
+        if not oracle_type:
+            return {"status": "error", "error": f"Unsupported object type: {object_type}"}
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            ddl = None
+            dependencies = []
+
+            # Use DBMS_METADATA.GET_DDL to get DDL
+            cur.execute("""
+                SELECT DBMS_METADATA.GET_DDL(:obj_type, :obj_name, :schema) FROM DUAL
+            """, {"obj_type": oracle_type, "obj_name": object_name, "schema": schema})
+            result = cur.fetchone()
+            if result and result[0]:
+                ddl = result[0].read() if hasattr(result[0], 'read') else str(result[0])
+
+            # Get dependencies for tables
+            if object_type.lower() == "table":
+                cur.execute("""
+                    SELECT DISTINCT c_pk.table_name
+                    FROM all_constraints c
+                    JOIN all_constraints c_pk ON c.r_constraint_name = c_pk.constraint_name
+                        AND c.r_owner = c_pk.owner
+                    WHERE c.constraint_type = 'R'
+                      AND c.owner = :schema
+                      AND c.table_name = :table_name
+                """, {"schema": schema, "table_name": object_name})
+                dependencies = [{"type": "table", "name": row[0]} for row in cur.fetchall()]
+
+            if ddl:
+                return {
+                    "status": "success",
+                    "object_type": object_type,
+                    "object_name": object_name,
+                    "schema": schema,
+                    "ddl": ddl,
+                    "dependencies": dependencies
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Object not found: {object_type} {schema}.{object_name}"
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get DDL: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get object dependencies in the database"""
+        schema = (schema or self._default_schema).upper()
+        logger.info(f"Getting object dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # Use ALL_DEPENDENCIES for dependency info
+            cur.execute("""
+                SELECT name as object_name,
+                       type as object_type,
+                       referenced_name as depends_on_name,
+                       referenced_type as depends_on_type
+                FROM all_dependencies
+                WHERE owner = :schema
+                  AND referenced_owner = :schema
+                  AND name != referenced_name
+                ORDER BY name
+            """, {"schema": schema})
+
+            columns = [desc[0].lower() for desc in cur.description]
+            dependencies = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Build dependency graph
+            dependency_graph = {}
+            for dep in dependencies:
+                obj_name = dep["object_name"]
+                dep_name = dep["depends_on_name"]
+                if obj_name not in dependency_graph:
+                    dependency_graph[obj_name] = []
+                dependency_graph[obj_name].append(dep_name)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "dependencies": dependencies,
+                "dependency_graph": dependency_graph
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_foreign_key_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get foreign key dependencies between tables"""
+        schema = (schema or self._default_schema).upper()
+        logger.info(f"Getting FK dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT a.constraint_name,
+                       a.table_name,
+                       cols.column_name,
+                       c_pk.table_name as referenced_table,
+                       cols_pk.column_name as referenced_column
+                FROM all_constraints a
+                JOIN all_constraints c_pk ON a.r_constraint_name = c_pk.constraint_name
+                    AND a.r_owner = c_pk.owner
+                JOIN all_cons_columns cols ON a.constraint_name = cols.constraint_name
+                    AND a.owner = cols.owner
+                JOIN all_cons_columns cols_pk ON c_pk.constraint_name = cols_pk.constraint_name
+                    AND c_pk.owner = cols_pk.owner
+                    AND cols.position = cols_pk.position
+                WHERE a.constraint_type = 'R'
+                  AND a.owner = :schema
+                ORDER BY a.table_name
+            """, {"schema": schema})
+
+            columns = [desc[0].lower() for desc in cur.description]
+            foreign_keys = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Build dependency graph for topological sort
+            tables = set()
+            graph = {}
+            for fk in foreign_keys:
+                tables.add(fk["table_name"])
+                tables.add(fk["referenced_table"])
+                if fk["table_name"] not in graph:
+                    graph[fk["table_name"]] = set()
+                graph[fk["table_name"]].add(fk["referenced_table"])
+
+            # Topological sort
+            table_order = self._topological_sort(tables, graph)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "foreign_keys": foreign_keys,
+                "table_order": table_order
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get FK dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def _topological_sort(self, nodes: set, graph: dict) -> List[str]:
+        """Perform topological sort on dependency graph"""
+        result = []
+        visited = set()
+        temp_mark = set()
+
+        def visit(node):
+            if node in temp_mark:
+                return  # Cycle detected, skip
+            if node not in visited:
+                temp_mark.add(node)
+                for dep in graph.get(node, []):
+                    visit(dep)
+                temp_mark.remove(node)
+                visited.add(node)
+                result.append(node)
+
+        for node in nodes:
+            if node not in visited:
+                visit(node)
+
+        return result

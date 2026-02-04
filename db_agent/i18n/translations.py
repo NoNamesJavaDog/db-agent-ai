@@ -34,6 +34,8 @@ TRANSLATIONS = {
         "cmd_help": "显示帮助信息",
         "cmd_file": "加载SQL文件进行分析",
         "cmd_migrate": "异构数据库迁移向导",
+        "cmd_sessions": "列出所有会话",
+        "cmd_session": "管理会话 (new/use/delete/rename)",
         "cmd_model": "切换AI模型",
         "cmd_language": "切换语言 (中文/English)",
         "cmd_reset": "重置对话历史",
@@ -60,6 +62,10 @@ TRANSLATIONS = {
         "migrate_source_db": "源数据库类型",
         "migrate_select_source": "选择源数据库类型",
         "migrate_enter_number": "请输入序号 (留空取消)",
+        "migrate_mode_file": "文件导入迁移",
+        "migrate_mode_file_desc": "从 SQL 文件导入并转换",
+        "migrate_mode_online": "在线迁移",
+        "migrate_mode_online_desc": "直接从源数据库迁移到目标数据库",
         "migrate_other": "其他",
         "migrate_enter_source_name": "请输入源数据库名称",
         "migrate_source_selected": "已选择源数据库: {source}",
@@ -156,6 +162,11 @@ TRANSLATIONS = {
         "pending_operations": "共有 {count} 个操作需要确认",
         "pending_sql_title": "待确认的SQL操作",
         "confirm_execute": "确认执行?",
+        "confirm_option_execute": "执行此操作",
+        "confirm_option_skip": "跳过此操作",
+        "confirm_option_execute_all": "执行全部操作",
+        "confirm_option_skip_all": "跳过全部操作",
+        "confirm_select_action": "请选择操作",
 
         # 提示
         "input_hint": "输入 {help} 查看帮助，{model} 切换模型，{lang} 切换语言，{exit} 退出",
@@ -203,7 +214,9 @@ TRANSLATIONS = {
         "db_unknown_tool": "未知工具: {tool}",
         "db_invalid_operation_index": "无效的操作索引",
         "db_unknown_pending_type": "未知的待确认操作类型",
+        "db_pending_confirmation_waiting": "有操作等待确认，请在下方选择操作。",
         "agent_thinking": "思考中... (迭代 {iteration})",
+        "agent_compressing_context": "正在压缩上下文...",
         "agent_conversation_error": "对话异常结束: {reason}",
         "agent_need_more_time": "抱歉，我需要更多时间来分析这个问题。请尝试简化你的问题或分步骤询问。",
         "db_unsupported_provider": "不支持的提供商: {provider}",
@@ -230,6 +243,179 @@ TRANSLATIONS = {
         "llm_error_unknown": "API 请求失败 (状态码 {code}): {message}",
         "llm_error_connection": "无法连接到 API 服务器: {error}",
         "llm_error_timeout": "API 请求超时，请稍后重试",
+
+        # Setup Wizard
+        "setup_welcome": "欢迎使用 DB Agent AI!",
+        "setup_first_time": "检测到您是首次使用，请完成初始配置。",
+        "setup_step_db": "步骤 1/2: 配置数据库连接",
+        "setup_step_llm": "步骤 2/2: 配置 AI 模型",
+        "setup_db_type": "选择数据库类型",
+        "setup_db_host": "数据库主机",
+        "setup_db_port": "数据库端口",
+        "setup_db_name": "数据库名称",
+        "setup_db_user": "用户名",
+        "setup_db_password": "密码",
+        "setup_conn_name": "连接名称",
+        "setup_testing_connection": "正在测试数据库连接...",
+        "setup_connection_success": "数据库连接成功!",
+        "setup_connection_failed": "数据库连接失败: {error}",
+        "setup_retry_connection": "是否重新配置?",
+        "setup_select_provider": "选择 AI 模型提供商",
+        "setup_provider_recommended": "(推荐)",
+        "setup_api_key": "API Key",
+        "setup_api_key_hint": "输入您的 {provider} API Key",
+        "setup_model": "模型名称",
+        "setup_model_default": "默认: {model}",
+        "setup_base_url": "API 地址 (可选)",
+        "setup_base_url_hint": "留空使用默认地址",
+        "setup_provider_name": "配置名称",
+        "setup_testing_api": "正在测试 API 连接...",
+        "setup_api_success": "API 连接成功!",
+        "setup_api_failed": "API 连接失败: {error}",
+        "setup_retry_api": "是否重新配置?",
+        "setup_complete": "配置完成!",
+        "setup_incomplete": "设置未完成，退出程序。",
+
+        # Migration
+        "migrate_prompt": "检测到旧版配置文件 config.ini",
+        "migrate_ask": "是否将配置迁移到新存储?",
+        "migrate_success": "配置迁移成功!",
+        "migrate_failed": "配置迁移失败",
+
+        # Connection Management
+        "cmd_connections": "管理数据库连接",
+        "cmd_providers": "管理 AI 模型",
+        "connections_title": "数据库连接列表",
+        "connections_empty": "暂无数据库连接",
+        "connection_name": "名称",
+        "connection_type": "类型",
+        "connection_host": "主机",
+        "connection_database": "数据库",
+        "connection_status": "状态",
+        "connection_active": "当前",
+        "connection_add_success": "连接 [{name}] 添加成功",
+        "connection_update_success": "连接 [{name}] 更新成功",
+        "connection_delete_success": "连接 [{name}] 已删除",
+        "connection_delete_confirm": "确定删除连接 [{name}]?",
+        "connection_switch_success": "已切换到连接 [{name}]",
+        "connection_not_found": "连接 [{name}] 不存在",
+        "connection_test_success": "连接 [{name}] 测试成功",
+        "connection_test_failed": "连接 [{name}] 测试失败: {error}",
+
+        # Provider Management
+        "providers_title": "AI 模型配置列表",
+        "providers_empty": "暂无 AI 模型配置",
+        "provider_name": "名称",
+        "provider_type": "提供商",
+        "provider_model": "模型",
+        "provider_status": "状态",
+        "provider_default": "默认",
+        "provider_add_success": "模型配置 [{name}] 添加成功",
+        "provider_update_success": "模型配置 [{name}] 更新成功",
+        "provider_delete_success": "模型配置 [{name}] 已删除",
+        "provider_delete_confirm": "确定删除模型配置 [{name}]?",
+        "provider_switch_success": "已切换到模型配置 [{name}]",
+        "provider_not_found": "模型配置 [{name}] 不存在",
+        "provider_cannot_delete_default": "无法删除默认模型配置",
+        "provider_cannot_delete_only": "无法删除唯一的模型配置",
+
+        # Input prompts
+        "input_enter_number": "请输入序号",
+        "input_empty_cancel": "留空取消",
+        "input_press_enter_default": "按回车使用默认值",
+
+        # Session Management
+        "sessions_title": "会话列表",
+        "sessions_empty": "暂无会话记录",
+        "session_name": "会话名称",
+        "session_messages": "消息数",
+        "session_created": "创建时间",
+        "session_status": "状态",
+        "session_current": "当前",
+        "session_default_name_format": "会话 %Y-%m-%d %H:%M",
+        "session_created": "会话 [{name}] 已创建",
+        "session_switched": "已切换到会话 [{name}]",
+        "session_restored_messages": "已恢复 {count} 条历史消息",
+        "session_deleted": "会话 [{name}] 已删除",
+        "session_delete_confirm": "确定删除会话 [{name}]? (包含 {count} 条消息)",
+        "session_not_found": "会话 [{identifier}] 不存在",
+        "session_cannot_delete_current": "无法删除当前会话",
+        "session_renamed": "会话已重命名为 [{name}]",
+        "session_no_current": "没有当前活动会话",
+        "session_already_current": "已经在会话 [{name}] 中",
+        "session_previous_found": "发现上次会话: {name} ({count} 条消息)",
+        "session_continue_or_new": "请选择 (1/2)",
+        "session_continue_previous": "继续上次会话",
+        "session_start_new": "开始新会话",
+        "session_continued": "继续会话 [{name}]",
+        "session_new_created": "新会话 [{name}] 已创建",
+
+        # ESC 中断功能
+        "press_esc_to_interrupt": "按 ESC 可打断",
+        "task_interrupted": "任务已打断",
+        "interrupt_hint": "输入您的指示（如：继续、算了、或其他要求）",
+        "interrupted_context_hint": "用户刚才打断了你正在执行的任务。请根据用户下面的输入判断意图：如果用户想继续之前的任务，请继续执行；如果用户有新的要求或修改，请按新要求处理；如果用户想放弃之前的任务，请确认并停止",
+
+        # 在线迁移
+        "cmd_migrate_online": "在线数据库对象迁移",
+        "migrate_online_title": "在线数据库迁移向导",
+        "migrate_no_active_connection": "请先使用 /connection use <名称> 连接到目标数据库",
+        "migrate_no_source_connections": "没有可用的源数据库连接",
+        "migrate_add_source_hint": "请先使用 /connection add 添加源数据库连接",
+        "migrate_select_source_connection": "选择源数据库连接",
+        "migrate_direction": "迁移方向",
+        "migrate_confirm_direction": "确认开始迁移?",
+        "migrate_source_schema": "源Schema (留空表示默认)",
+        "migrate_task_created": "迁移任务已创建 (ID: {task_id})",
+        "migrate_online_instruction": """请执行在线数据库迁移任务。
+
+**任务信息：**
+- 任务ID: {task_id}
+- 源数据库连接名: {source_name}
+- 源数据库类型: {source_type}
+- 目标数据库连接名: {target_name}
+- 目标数据库类型: {target_type}
+- 源Schema: {source_schema}
+
+**请按以下步骤执行：**
+
+1. 调用 `analyze_source_database` 工具分析源数据库:
+   - source_connection_name: "{source_name}"
+
+2. 调用 `create_migration_plan` 工具创建迁移计划:
+   - task_id: {task_id}
+   - source_connection_name: "{source_name}"
+
+3. 展示迁移计划给用户确认（显示对象列表、转换说明）
+
+4. 用户确认后，调用 `execute_migration_batch` 执行迁移:
+   - task_id: {task_id}
+
+5. 完成后调用 `compare_databases` 进行对比验证:
+   - task_id: {task_id}
+
+6. 最后调用 `generate_migration_report` 生成报告:
+   - task_id: {task_id}""",
+        "migration_storage_required": "在线迁移功能需要启用存储",
+        "migration_source_not_found": "源数据库连接不存在: {name}",
+        "migration_task_not_found": "迁移任务不存在: {task_id}",
+        "migration_item_not_found": "迁移项不存在: {item_id}",
+        "migration_analyzing": "正在分析源数据库...",
+        "migration_planning": "正在制定迁移计划...",
+        "migration_executing": "正在执行迁移...",
+        "migration_comparing": "正在比对数据库...",
+        "migration_completed": "迁移完成",
+        "migration_failed": "迁移失败",
+        "migration_progress": "进度: {completed}/{total} ({percent}%)",
+        "migration_object_types": "对象类型",
+        "migration_tables": "表",
+        "migration_indexes": "索引",
+        "migration_views": "视图",
+        "migration_sequences": "序列",
+        "migration_procedures": "存储过程",
+        "migration_functions": "函数",
+        "migration_triggers": "触发器",
+        "migration_constraints": "约束",
     },
 
     "en": {
@@ -260,6 +446,8 @@ TRANSLATIONS = {
         "cmd_help": "Show help",
         "cmd_file": "Load SQL file for analysis",
         "cmd_migrate": "Database migration wizard",
+        "cmd_sessions": "List all sessions",
+        "cmd_session": "Manage sessions (new/use/delete/rename)",
         "cmd_model": "Switch AI model",
         "cmd_language": "Switch language (中文/English)",
         "cmd_reset": "Reset conversation",
@@ -286,6 +474,10 @@ TRANSLATIONS = {
         "migrate_source_db": "Source database type",
         "migrate_select_source": "Select source database type",
         "migrate_enter_number": "Enter number (empty to cancel)",
+        "migrate_mode_file": "File import migration",
+        "migrate_mode_file_desc": "Import from SQL file and convert",
+        "migrate_mode_online": "Online migration",
+        "migrate_mode_online_desc": "Migrate directly from source to target database",
         "migrate_other": "Other",
         "migrate_enter_source_name": "Enter source database name",
         "migrate_source_selected": "Source database selected: {source}",
@@ -382,6 +574,11 @@ Please:
         "pending_operations": "{count} operations need confirmation",
         "pending_sql_title": "Pending SQL Operation",
         "confirm_execute": "Confirm execution?",
+        "confirm_option_execute": "Execute this operation",
+        "confirm_option_skip": "Skip this operation",
+        "confirm_option_execute_all": "Execute all operations",
+        "confirm_option_skip_all": "Skip all operations",
+        "confirm_select_action": "Select action",
 
         # Hints
         "input_hint": "Type {help} for help, {model} to switch model, {lang} to switch language, {exit} to quit",
@@ -429,7 +626,9 @@ Please:
         "db_unknown_tool": "Unknown tool: {tool}",
         "db_invalid_operation_index": "Invalid operation index",
         "db_unknown_pending_type": "Unknown pending operation type",
+        "db_pending_confirmation_waiting": "Operation pending confirmation. Please select an action below.",
         "agent_thinking": "Thinking... (iteration {iteration})",
+        "agent_compressing_context": "Compressing context...",
         "agent_conversation_error": "Conversation ended abnormally: {reason}",
         "agent_need_more_time": "Sorry, I need more time to analyze this problem. Please try simplifying your question or ask step by step.",
         "db_unsupported_provider": "Unsupported provider: {provider}",
@@ -456,6 +655,179 @@ Please:
         "llm_error_unknown": "API request failed (status code {code}): {message}",
         "llm_error_connection": "Cannot connect to API server: {error}",
         "llm_error_timeout": "API request timeout, please try again later",
+
+        # Setup Wizard
+        "setup_welcome": "Welcome to DB Agent AI!",
+        "setup_first_time": "First time setup detected. Please complete the initial configuration.",
+        "setup_step_db": "Step 1/2: Configure Database Connection",
+        "setup_step_llm": "Step 2/2: Configure AI Model",
+        "setup_db_type": "Select database type",
+        "setup_db_host": "Database host",
+        "setup_db_port": "Database port",
+        "setup_db_name": "Database name",
+        "setup_db_user": "Username",
+        "setup_db_password": "Password",
+        "setup_conn_name": "Connection name",
+        "setup_testing_connection": "Testing database connection...",
+        "setup_connection_success": "Database connection successful!",
+        "setup_connection_failed": "Database connection failed: {error}",
+        "setup_retry_connection": "Retry configuration?",
+        "setup_select_provider": "Select AI model provider",
+        "setup_provider_recommended": "(Recommended)",
+        "setup_api_key": "API Key",
+        "setup_api_key_hint": "Enter your {provider} API Key",
+        "setup_model": "Model name",
+        "setup_model_default": "Default: {model}",
+        "setup_base_url": "API URL (optional)",
+        "setup_base_url_hint": "Leave empty for default",
+        "setup_provider_name": "Configuration name",
+        "setup_testing_api": "Testing API connection...",
+        "setup_api_success": "API connection successful!",
+        "setup_api_failed": "API connection failed: {error}",
+        "setup_retry_api": "Retry configuration?",
+        "setup_complete": "Configuration complete!",
+        "setup_incomplete": "Setup incomplete, exiting.",
+
+        # Migration
+        "migrate_prompt": "Legacy config.ini file detected",
+        "migrate_ask": "Migrate configuration to new storage?",
+        "migrate_success": "Configuration migrated successfully!",
+        "migrate_failed": "Configuration migration failed",
+
+        # Connection Management
+        "cmd_connections": "Manage database connections",
+        "cmd_providers": "Manage AI models",
+        "connections_title": "Database Connections",
+        "connections_empty": "No database connections",
+        "connection_name": "Name",
+        "connection_type": "Type",
+        "connection_host": "Host",
+        "connection_database": "Database",
+        "connection_status": "Status",
+        "connection_active": "Active",
+        "connection_add_success": "Connection [{name}] added successfully",
+        "connection_update_success": "Connection [{name}] updated successfully",
+        "connection_delete_success": "Connection [{name}] deleted",
+        "connection_delete_confirm": "Delete connection [{name}]?",
+        "connection_switch_success": "Switched to connection [{name}]",
+        "connection_not_found": "Connection [{name}] not found",
+        "connection_test_success": "Connection [{name}] test successful",
+        "connection_test_failed": "Connection [{name}] test failed: {error}",
+
+        # Provider Management
+        "providers_title": "AI Model Configurations",
+        "providers_empty": "No AI model configurations",
+        "provider_name": "Name",
+        "provider_type": "Provider",
+        "provider_model": "Model",
+        "provider_status": "Status",
+        "provider_default": "Default",
+        "provider_add_success": "Model configuration [{name}] added successfully",
+        "provider_update_success": "Model configuration [{name}] updated successfully",
+        "provider_delete_success": "Model configuration [{name}] deleted",
+        "provider_delete_confirm": "Delete model configuration [{name}]?",
+        "provider_switch_success": "Switched to model configuration [{name}]",
+        "provider_not_found": "Model configuration [{name}] not found",
+        "provider_cannot_delete_default": "Cannot delete default model configuration",
+        "provider_cannot_delete_only": "Cannot delete the only model configuration",
+
+        # Input prompts
+        "input_enter_number": "Enter number",
+        "input_empty_cancel": "empty to cancel",
+        "input_press_enter_default": "Press Enter for default",
+
+        # Session Management
+        "sessions_title": "Sessions",
+        "sessions_empty": "No sessions found",
+        "session_name": "Session Name",
+        "session_messages": "Messages",
+        "session_created": "Created",
+        "session_status": "Status",
+        "session_current": "Current",
+        "session_default_name_format": "Session %Y-%m-%d %H:%M",
+        "session_created": "Session [{name}] created",
+        "session_switched": "Switched to session [{name}]",
+        "session_restored_messages": "Restored {count} messages from history",
+        "session_deleted": "Session [{name}] deleted",
+        "session_delete_confirm": "Delete session [{name}]? ({count} messages)",
+        "session_not_found": "Session [{identifier}] not found",
+        "session_cannot_delete_current": "Cannot delete current session",
+        "session_renamed": "Session renamed to [{name}]",
+        "session_no_current": "No current active session",
+        "session_already_current": "Already in session [{name}]",
+        "session_previous_found": "Previous session found: {name} ({count} messages)",
+        "session_continue_or_new": "Please select (1/2)",
+        "session_continue_previous": "Continue previous session",
+        "session_start_new": "Start new session",
+        "session_continued": "Continuing session [{name}]",
+        "session_new_created": "New session [{name}] created",
+
+        # ESC Interrupt Feature
+        "press_esc_to_interrupt": "Press ESC to interrupt",
+        "task_interrupted": "Task interrupted",
+        "interrupt_hint": "Enter your instruction (e.g., continue, cancel, or other requests)",
+        "interrupted_context_hint": "The user just interrupted the task you were executing. Based on the user's input below, determine their intent: if they want to continue the previous task, please resume; if they have new requirements or modifications, handle them accordingly; if they want to abort the previous task, confirm and stop",
+
+        # Online Migration
+        "cmd_migrate_online": "Online database object migration",
+        "migrate_online_title": "Online Database Migration Wizard",
+        "migrate_no_active_connection": "Please connect to target database first using /connection use <name>",
+        "migrate_no_source_connections": "No source database connections available",
+        "migrate_add_source_hint": "Please add source database connection first using /connection add",
+        "migrate_select_source_connection": "Select source database connection",
+        "migrate_direction": "Migration direction",
+        "migrate_confirm_direction": "Confirm to start migration?",
+        "migrate_source_schema": "Source schema (leave empty for default)",
+        "migrate_task_created": "Migration task created (ID: {task_id})",
+        "migrate_online_instruction": """Please execute online database migration task.
+
+**Task Information:**
+- Task ID: {task_id}
+- Source connection name: {source_name}
+- Source database type: {source_type}
+- Target connection name: {target_name}
+- Target database type: {target_type}
+- Source schema: {source_schema}
+
+**Please follow these steps:**
+
+1. Call `analyze_source_database` to analyze source database:
+   - source_connection_name: "{source_name}"
+
+2. Call `create_migration_plan` to create migration plan:
+   - task_id: {task_id}
+   - source_connection_name: "{source_name}"
+
+3. Show migration plan for user confirmation (display object list, conversion notes)
+
+4. After user confirmation, call `execute_migration_batch` to execute migration:
+   - task_id: {task_id}
+
+5. After completion, call `compare_databases` to verify:
+   - task_id: {task_id}
+
+6. Finally call `generate_migration_report` to generate report:
+   - task_id: {task_id}""",
+        "migration_storage_required": "Online migration requires storage to be enabled",
+        "migration_source_not_found": "Source database connection not found: {name}",
+        "migration_task_not_found": "Migration task not found: {task_id}",
+        "migration_item_not_found": "Migration item not found: {item_id}",
+        "migration_analyzing": "Analyzing source database...",
+        "migration_planning": "Creating migration plan...",
+        "migration_executing": "Executing migration...",
+        "migration_comparing": "Comparing databases...",
+        "migration_completed": "Migration completed",
+        "migration_failed": "Migration failed",
+        "migration_progress": "Progress: {completed}/{total} ({percent}%)",
+        "migration_object_types": "Object types",
+        "migration_tables": "Tables",
+        "migration_indexes": "Indexes",
+        "migration_views": "Views",
+        "migration_sequences": "Sequences",
+        "migration_procedures": "Stored procedures",
+        "migration_functions": "Functions",
+        "migration_triggers": "Triggers",
+        "migration_constraints": "Constraints",
     }
 }
 

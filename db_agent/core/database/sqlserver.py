@@ -9,7 +9,7 @@ Supports multiple versions:
 - Azure SQL Database
 """
 import pytds
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
 from db_agent.i18n import t
 from .base import BaseDatabaseTools
@@ -1016,3 +1016,433 @@ class SQLServerTools(BaseDatabaseTools):
             }
         finally:
             conn.close()
+
+    # ==================== Migration Support Methods ====================
+
+    def get_all_objects(self, schema: str = None, object_types: List[str] = None) -> Dict[str, Any]:
+        """Get all database objects for migration"""
+        schema = schema or self._default_schema
+        logger.info(f"Getting all objects from schema: {schema}")
+
+        if object_types is None:
+            object_types = ["table", "view", "index", "procedure", "function", "trigger", "constraint"]
+
+        result = {
+            "status": "success",
+            "schema": schema,
+            "objects": {}
+        }
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # Get tables
+            if "table" in object_types:
+                cur.execute("""
+                    SELECT
+                        t.name as name,
+                        s.name as [schema],
+                        p.rows as row_count,
+                        SUM(a.total_pages) * 8 * 1024 as size_bytes
+                    FROM sys.tables t
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    LEFT JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
+                    LEFT JOIN sys.allocation_units a ON p.partition_id = a.container_id
+                    WHERE s.name = @schema
+                    GROUP BY t.name, s.name, p.rows
+                    ORDER BY t.name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["tables"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get views
+            if "view" in object_types:
+                cur.execute("""
+                    SELECT
+                        v.name as name,
+                        s.name as [schema],
+                        m.definition
+                    FROM sys.views v
+                    JOIN sys.schemas s ON v.schema_id = s.schema_id
+                    JOIN sys.sql_modules m ON v.object_id = m.object_id
+                    WHERE s.name = @schema
+                    ORDER BY v.name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["views"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get indexes
+            if "index" in object_types:
+                cur.execute("""
+                    SELECT
+                        i.name as name,
+                        t.name as table_name,
+                        s.name as [schema],
+                        i.type_desc as index_type,
+                        i.is_unique,
+                        i.is_primary_key as is_primary
+                    FROM sys.indexes i
+                    JOIN sys.tables t ON i.object_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    WHERE s.name = @schema
+                      AND i.name IS NOT NULL
+                    ORDER BY t.name, i.name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["indexes"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get procedures
+            if "procedure" in object_types:
+                cur.execute("""
+                    SELECT
+                        p.name as name,
+                        s.name as [schema],
+                        'procedure' as type,
+                        m.definition as source
+                    FROM sys.procedures p
+                    JOIN sys.schemas s ON p.schema_id = s.schema_id
+                    LEFT JOIN sys.sql_modules m ON p.object_id = m.object_id
+                    WHERE s.name = @schema
+                    ORDER BY p.name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["procedures"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get functions
+            if "function" in object_types:
+                cur.execute("""
+                    SELECT
+                        o.name as name,
+                        s.name as [schema],
+                        CASE o.type
+                            WHEN 'FN' THEN 'scalar function'
+                            WHEN 'TF' THEN 'table function'
+                            WHEN 'IF' THEN 'inline table function'
+                        END as type,
+                        m.definition as source
+                    FROM sys.objects o
+                    JOIN sys.schemas s ON o.schema_id = s.schema_id
+                    LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
+                    WHERE s.name = @schema AND o.type IN ('FN', 'TF', 'IF')
+                    ORDER BY o.name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["functions"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get triggers
+            if "trigger" in object_types:
+                cur.execute("""
+                    SELECT
+                        tr.name as name,
+                        t.name as table_name,
+                        s.name as [schema],
+                        m.definition,
+                        CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END as timing
+                    FROM sys.triggers tr
+                    JOIN sys.tables t ON tr.parent_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    LEFT JOIN sys.sql_modules m ON tr.object_id = m.object_id
+                    WHERE s.name = @schema
+                    ORDER BY t.name, tr.name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["triggers"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get constraints
+            if "constraint" in object_types:
+                cur.execute("""
+                    SELECT
+                        kc.name as name,
+                        t.name as table_name,
+                        s.name as [schema],
+                        kc.type_desc as constraint_type,
+                        cc.definition
+                    FROM sys.key_constraints kc
+                    JOIN sys.tables t ON kc.parent_object_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    LEFT JOIN sys.check_constraints cc ON kc.object_id = cc.object_id
+                    WHERE s.name = @schema
+                    UNION ALL
+                    SELECT
+                        fk.name as name,
+                        t.name as table_name,
+                        s.name as [schema],
+                        'FOREIGN_KEY' as constraint_type,
+                        NULL as definition
+                    FROM sys.foreign_keys fk
+                    JOIN sys.tables t ON fk.parent_object_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    WHERE s.name = @schema
+                    ORDER BY table_name, name
+                """, {"schema": schema})
+                columns = [desc[0].lower() for desc in cur.description]
+                result["objects"]["constraints"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Calculate totals
+            total_count = sum(len(result["objects"].get(k, [])) for k in result["objects"])
+            result["total_count"] = total_count
+
+            logger.info(f"Found {total_count} total objects")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get all objects: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_ddl(self, object_type: str, object_name: str, schema: str = None) -> Dict[str, Any]:
+        """Get DDL for a specific database object"""
+        schema = schema or self._default_schema
+        logger.info(f"Getting DDL for {object_type}: {schema}.{object_name}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            ddl = None
+            dependencies = []
+
+            # SQL Server doesn't have a simple DDL extraction function
+            # We'll construct DDL from metadata for simple objects
+            if object_type == "table":
+                # Get table columns
+                cur.execute("""
+                    SELECT
+                        c.name as column_name,
+                        t.name as data_type,
+                        c.max_length,
+                        c.precision,
+                        c.scale,
+                        c.is_nullable,
+                        dc.definition as default_value,
+                        c.is_identity
+                    FROM sys.columns c
+                    JOIN sys.types t ON c.user_type_id = t.user_type_id
+                    JOIN sys.tables tab ON c.object_id = tab.object_id
+                    JOIN sys.schemas s ON tab.schema_id = s.schema_id
+                    LEFT JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
+                    WHERE s.name = @schema AND tab.name = @table_name
+                    ORDER BY c.column_id
+                """, {"schema": schema, "table_name": object_name})
+
+                columns_data = cur.fetchall()
+                if columns_data:
+                    col_defs = []
+                    for col in columns_data:
+                        col_name, data_type, max_len, prec, scale, nullable, default, is_identity = col
+                        type_str = data_type
+                        if data_type in ('varchar', 'nvarchar', 'char', 'nchar'):
+                            type_str = f"{data_type}({max_len if max_len != -1 else 'MAX'})"
+                        elif data_type in ('decimal', 'numeric'):
+                            type_str = f"{data_type}({prec},{scale})"
+                        col_def = f"[{col_name}] {type_str}"
+                        if is_identity:
+                            col_def += " IDENTITY(1,1)"
+                        if not nullable:
+                            col_def += " NOT NULL"
+                        if default:
+                            col_def += f" DEFAULT {default}"
+                        col_defs.append(col_def)
+                    ddl = f"CREATE TABLE [{schema}].[{object_name}] (\n    " + ",\n    ".join(col_defs) + "\n);"
+
+                # Get FK dependencies
+                cur.execute("""
+                    SELECT DISTINCT
+                        OBJECT_NAME(fkc.referenced_object_id) as referenced_table
+                    FROM sys.foreign_key_columns fkc
+                    JOIN sys.tables t ON fkc.parent_object_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    WHERE s.name = @schema AND t.name = @table_name
+                """, {"schema": schema, "table_name": object_name})
+                dependencies = [{"type": "table", "name": row[0]} for row in cur.fetchall()]
+
+            elif object_type in ("view", "procedure", "function", "trigger"):
+                # Get definition from sys.sql_modules
+                type_filter = {
+                    "view": "V",
+                    "procedure": "P",
+                    "function": "FN",
+                    "trigger": "TR"
+                }
+                cur.execute("""
+                    SELECT m.definition
+                    FROM sys.sql_modules m
+                    JOIN sys.objects o ON m.object_id = o.object_id
+                    JOIN sys.schemas s ON o.schema_id = s.schema_id
+                    WHERE s.name = @schema AND o.name = @obj_name
+                """, {"schema": schema, "obj_name": object_name})
+                result = cur.fetchone()
+                ddl = result[0] if result else None
+
+            elif object_type == "index":
+                cur.execute("""
+                    SELECT
+                        i.name,
+                        i.is_unique,
+                        t.name as table_name,
+                        STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal) as columns
+                    FROM sys.indexes i
+                    JOIN sys.tables t ON i.object_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+                    JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                    WHERE s.name = @schema AND i.name = @index_name
+                    GROUP BY i.name, i.is_unique, t.name
+                """, {"schema": schema, "index_name": object_name})
+                result = cur.fetchone()
+                if result:
+                    name, is_unique, table_name, columns = result
+                    unique_str = "UNIQUE " if is_unique else ""
+                    ddl = f"CREATE {unique_str}INDEX [{name}] ON [{schema}].[{table_name}] ({columns});"
+
+            if ddl:
+                return {
+                    "status": "success",
+                    "object_type": object_type,
+                    "object_name": object_name,
+                    "schema": schema,
+                    "ddl": ddl,
+                    "dependencies": dependencies
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Object not found: {object_type} {schema}.{object_name}"
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get DDL: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get object dependencies in the database"""
+        schema = schema or self._default_schema
+        logger.info(f"Getting object dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # Get dependencies from sys.sql_expression_dependencies
+            cur.execute("""
+                SELECT
+                    OBJECT_NAME(d.referencing_id) as object_name,
+                    o1.type_desc as object_type,
+                    COALESCE(d.referenced_entity_name, OBJECT_NAME(d.referenced_id)) as depends_on_name,
+                    COALESCE(o2.type_desc, 'UNKNOWN') as depends_on_type
+                FROM sys.sql_expression_dependencies d
+                JOIN sys.objects o1 ON d.referencing_id = o1.object_id
+                JOIN sys.schemas s ON o1.schema_id = s.schema_id
+                LEFT JOIN sys.objects o2 ON d.referenced_id = o2.object_id
+                WHERE s.name = @schema
+                  AND OBJECT_NAME(d.referencing_id) != COALESCE(d.referenced_entity_name, OBJECT_NAME(d.referenced_id))
+                ORDER BY OBJECT_NAME(d.referencing_id)
+            """, {"schema": schema})
+
+            columns = [desc[0].lower() for desc in cur.description]
+            dependencies = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Build dependency graph
+            dependency_graph = {}
+            for dep in dependencies:
+                obj_name = dep["object_name"]
+                dep_name = dep["depends_on_name"]
+                if obj_name and dep_name:
+                    if obj_name not in dependency_graph:
+                        dependency_graph[obj_name] = []
+                    dependency_graph[obj_name].append(dep_name)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "dependencies": dependencies,
+                "dependency_graph": dependency_graph
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_foreign_key_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get foreign key dependencies between tables"""
+        schema = schema or self._default_schema
+        logger.info(f"Getting FK dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT
+                    fk.name as constraint_name,
+                    tp.name as table_name,
+                    cp.name as column_name,
+                    tr.name as referenced_table,
+                    cr.name as referenced_column
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+                JOIN sys.tables tp ON fkc.parent_object_id = tp.object_id
+                JOIN sys.columns cp ON fkc.parent_object_id = cp.object_id AND fkc.parent_column_id = cp.column_id
+                JOIN sys.tables tr ON fkc.referenced_object_id = tr.object_id
+                JOIN sys.columns cr ON fkc.referenced_object_id = cr.object_id AND fkc.referenced_column_id = cr.column_id
+                JOIN sys.schemas s ON tp.schema_id = s.schema_id
+                WHERE s.name = @schema
+                ORDER BY tp.name
+            """, {"schema": schema})
+
+            columns = [desc[0].lower() for desc in cur.description]
+            foreign_keys = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Build dependency graph for topological sort
+            tables = set()
+            graph = {}
+            for fk in foreign_keys:
+                tables.add(fk["table_name"])
+                tables.add(fk["referenced_table"])
+                if fk["table_name"] not in graph:
+                    graph[fk["table_name"]] = set()
+                graph[fk["table_name"]].add(fk["referenced_table"])
+
+            # Topological sort
+            table_order = self._topological_sort(tables, graph)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "foreign_keys": foreign_keys,
+                "table_order": table_order
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get FK dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def _topological_sort(self, nodes: set, graph: dict) -> List[str]:
+        """Perform topological sort on dependency graph"""
+        result = []
+        visited = set()
+        temp_mark = set()
+
+        def visit(node):
+            if node in temp_mark:
+                return  # Cycle detected, skip
+            if node not in visited:
+                temp_mark.add(node)
+                for dep in graph.get(node, []):
+                    visit(dep)
+                temp_mark.remove(node)
+                visited.add(node)
+                result.append(node)
+
+        for node in nodes:
+            if node not in visited:
+                visit(node)
+
+        return result

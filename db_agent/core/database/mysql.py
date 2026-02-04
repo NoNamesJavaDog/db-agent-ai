@@ -2,7 +2,7 @@
 MySQL Database Tools - MySQL 5.7/8.0 specific implementation
 """
 import pymysql
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
 import re
 from db_agent.i18n import t
@@ -841,3 +841,362 @@ class MySQLTools(BaseDatabaseTools):
             }
         finally:
             conn.close()
+
+    # ==================== Migration Support Methods ====================
+
+    def get_all_objects(self, schema: str = None, object_types: List[str] = None) -> Dict[str, Any]:
+        """Get all database objects for migration"""
+        schema = schema or self.db_config.get("database")
+        logger.info(f"Getting all objects from schema: {schema}")
+
+        if object_types is None:
+            object_types = ["table", "view", "index", "procedure", "function", "trigger", "constraint"]
+
+        result = {
+            "status": "success",
+            "schema": schema,
+            "objects": {}
+        }
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # Get tables
+            if "table" in object_types:
+                cur.execute("""
+                    SELECT
+                        TABLE_NAME as name,
+                        TABLE_SCHEMA as `schema`,
+                        TABLE_ROWS as row_count,
+                        (DATA_LENGTH + INDEX_LENGTH) as size_bytes,
+                        ENGINE,
+                        TABLE_COLLATION,
+                        TABLE_COMMENT as comment
+                    FROM information_schema.TABLES
+                    WHERE TABLE_SCHEMA = %s AND TABLE_TYPE = 'BASE TABLE'
+                    ORDER BY TABLE_NAME
+                """, (schema,))
+                result["objects"]["tables"] = cur.fetchall()
+
+            # Get views
+            if "view" in object_types:
+                cur.execute("""
+                    SELECT
+                        TABLE_NAME as name,
+                        TABLE_SCHEMA as `schema`,
+                        VIEW_DEFINITION as definition
+                    FROM information_schema.VIEWS
+                    WHERE TABLE_SCHEMA = %s
+                    ORDER BY TABLE_NAME
+                """, (schema,))
+                result["objects"]["views"] = cur.fetchall()
+
+            # Get indexes
+            if "index" in object_types:
+                cur.execute("""
+                    SELECT
+                        INDEX_NAME as name,
+                        TABLE_NAME as table_name,
+                        TABLE_SCHEMA as `schema`,
+                        GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
+                        NOT NON_UNIQUE as is_unique,
+                        INDEX_NAME = 'PRIMARY' as is_primary,
+                        INDEX_TYPE
+                    FROM information_schema.STATISTICS
+                    WHERE TABLE_SCHEMA = %s
+                    GROUP BY INDEX_NAME, TABLE_NAME, TABLE_SCHEMA, NON_UNIQUE, INDEX_TYPE
+                    ORDER BY TABLE_NAME, INDEX_NAME
+                """, (schema,))
+                result["objects"]["indexes"] = cur.fetchall()
+
+            # Get procedures
+            if "procedure" in object_types:
+                cur.execute("""
+                    SELECT
+                        ROUTINE_NAME as name,
+                        ROUTINE_SCHEMA as `schema`,
+                        'procedure' as type,
+                        ROUTINE_DEFINITION as source,
+                        DTD_IDENTIFIER as return_type,
+                        ROUTINE_COMMENT as comment
+                    FROM information_schema.ROUTINES
+                    WHERE ROUTINE_SCHEMA = %s AND ROUTINE_TYPE = 'PROCEDURE'
+                    ORDER BY ROUTINE_NAME
+                """, (schema,))
+                result["objects"]["procedures"] = cur.fetchall()
+
+            # Get functions
+            if "function" in object_types:
+                cur.execute("""
+                    SELECT
+                        ROUTINE_NAME as name,
+                        ROUTINE_SCHEMA as `schema`,
+                        'function' as type,
+                        ROUTINE_DEFINITION as source,
+                        DTD_IDENTIFIER as return_type,
+                        ROUTINE_COMMENT as comment
+                    FROM information_schema.ROUTINES
+                    WHERE ROUTINE_SCHEMA = %s AND ROUTINE_TYPE = 'FUNCTION'
+                    ORDER BY ROUTINE_NAME
+                """, (schema,))
+                result["objects"]["functions"] = cur.fetchall()
+
+            # Get triggers
+            if "trigger" in object_types:
+                cur.execute("""
+                    SELECT
+                        TRIGGER_NAME as name,
+                        EVENT_OBJECT_TABLE as table_name,
+                        TRIGGER_SCHEMA as `schema`,
+                        ACTION_STATEMENT as definition,
+                        ACTION_TIMING as timing,
+                        EVENT_MANIPULATION as event
+                    FROM information_schema.TRIGGERS
+                    WHERE TRIGGER_SCHEMA = %s
+                    ORDER BY EVENT_OBJECT_TABLE, TRIGGER_NAME
+                """, (schema,))
+                result["objects"]["triggers"] = cur.fetchall()
+
+            # Get constraints
+            if "constraint" in object_types:
+                cur.execute("""
+                    SELECT
+                        tc.CONSTRAINT_NAME as name,
+                        tc.TABLE_NAME as table_name,
+                        tc.CONSTRAINT_SCHEMA as `schema`,
+                        tc.CONSTRAINT_TYPE as constraint_type,
+                        GROUP_CONCAT(kcu.COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION) as columns,
+                        kcu.REFERENCED_TABLE_NAME as referenced_table,
+                        GROUP_CONCAT(kcu.REFERENCED_COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION) as referenced_columns
+                    FROM information_schema.TABLE_CONSTRAINTS tc
+                    LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu
+                        ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                        AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+                        AND tc.TABLE_NAME = kcu.TABLE_NAME
+                    WHERE tc.CONSTRAINT_SCHEMA = %s
+                    GROUP BY tc.CONSTRAINT_NAME, tc.TABLE_NAME, tc.CONSTRAINT_SCHEMA, tc.CONSTRAINT_TYPE,
+                             kcu.REFERENCED_TABLE_NAME
+                    ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME
+                """, (schema,))
+                result["objects"]["constraints"] = cur.fetchall()
+
+            # Calculate totals
+            total_count = sum(len(result["objects"].get(k, [])) for k in result["objects"])
+            result["total_count"] = total_count
+
+            logger.info(f"Found {total_count} total objects")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get all objects: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_ddl(self, object_type: str, object_name: str, schema: str = None) -> Dict[str, Any]:
+        """Get DDL for a specific database object"""
+        schema = schema or self.db_config.get("database")
+        logger.info(f"Getting DDL for {object_type}: {schema}.{object_name}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            ddl = None
+            dependencies = []
+
+            if object_type == "table":
+                cur.execute(f"SHOW CREATE TABLE `{schema}`.`{object_name}`")
+                result = cur.fetchone()
+                ddl = result.get('Create Table') if result else None
+
+                # Get FK dependencies
+                cur.execute("""
+                    SELECT DISTINCT REFERENCED_TABLE_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE
+                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
+                      AND REFERENCED_TABLE_NAME IS NOT NULL
+                """, (schema, object_name))
+                dependencies = [{"type": "table", "name": row['REFERENCED_TABLE_NAME']} for row in cur.fetchall()]
+
+            elif object_type == "view":
+                cur.execute(f"SHOW CREATE VIEW `{schema}`.`{object_name}`")
+                result = cur.fetchone()
+                ddl = result.get('Create View') if result else None
+
+            elif object_type == "procedure":
+                cur.execute(f"SHOW CREATE PROCEDURE `{schema}`.`{object_name}`")
+                result = cur.fetchone()
+                ddl = result.get('Create Procedure') if result else None
+
+            elif object_type == "function":
+                cur.execute(f"SHOW CREATE FUNCTION `{schema}`.`{object_name}`")
+                result = cur.fetchone()
+                ddl = result.get('Create Function') if result else None
+
+            elif object_type == "trigger":
+                cur.execute(f"SHOW CREATE TRIGGER `{schema}`.`{object_name}`")
+                result = cur.fetchone()
+                ddl = result.get('SQL Original Statement') if result else None
+
+            elif object_type == "index":
+                # Get table name for the index
+                cur.execute("""
+                    SELECT TABLE_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
+                           NOT NON_UNIQUE as is_unique
+                    FROM information_schema.STATISTICS
+                    WHERE TABLE_SCHEMA = %s AND INDEX_NAME = %s
+                    GROUP BY TABLE_NAME, NON_UNIQUE
+                """, (schema, object_name))
+                result = cur.fetchone()
+                if result:
+                    unique_str = "UNIQUE " if result['is_unique'] else ""
+                    ddl = f"CREATE {unique_str}INDEX `{object_name}` ON `{result['TABLE_NAME']}` ({result['columns']})"
+
+            if ddl:
+                return {
+                    "status": "success",
+                    "object_type": object_type,
+                    "object_name": object_name,
+                    "schema": schema,
+                    "ddl": ddl,
+                    "dependencies": dependencies
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Object not found: {object_type} {schema}.{object_name}"
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get DDL: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get object dependencies in the database"""
+        schema = schema or self.db_config.get("database")
+        logger.info(f"Getting object dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # MySQL doesn't have a comprehensive dependency view like PostgreSQL
+            # We can get view dependencies from information_schema
+            dependencies = []
+            dependency_graph = {}
+
+            # Get view dependencies (tables referenced in views)
+            cur.execute("""
+                SELECT
+                    v.TABLE_NAME as object_name,
+                    'view' as object_type,
+                    t.TABLE_NAME as depends_on_name,
+                    CASE t.TABLE_TYPE
+                        WHEN 'BASE TABLE' THEN 'table'
+                        WHEN 'VIEW' THEN 'view'
+                        ELSE 'other'
+                    END as depends_on_type
+                FROM information_schema.VIEWS v
+                JOIN information_schema.TABLES t
+                    ON v.VIEW_DEFINITION LIKE CONCAT('%%`', t.TABLE_NAME, '`%%')
+                    AND t.TABLE_SCHEMA = v.TABLE_SCHEMA
+                WHERE v.TABLE_SCHEMA = %s
+                  AND v.TABLE_NAME != t.TABLE_NAME
+            """, (schema,))
+
+            for row in cur.fetchall():
+                dependencies.append(dict(row))
+                obj_name = row['object_name']
+                dep_name = row['depends_on_name']
+                if obj_name not in dependency_graph:
+                    dependency_graph[obj_name] = []
+                dependency_graph[obj_name].append(dep_name)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "dependencies": dependencies,
+                "dependency_graph": dependency_graph
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_foreign_key_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get foreign key dependencies between tables"""
+        schema = schema or self.db_config.get("database")
+        logger.info(f"Getting FK dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT
+                    CONSTRAINT_NAME as constraint_name,
+                    TABLE_NAME as table_name,
+                    COLUMN_NAME as column_name,
+                    REFERENCED_TABLE_NAME as referenced_table,
+                    REFERENCED_COLUMN_NAME as referenced_column
+                FROM information_schema.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = %s
+                  AND REFERENCED_TABLE_NAME IS NOT NULL
+                ORDER BY TABLE_NAME
+            """, (schema,))
+
+            foreign_keys = cur.fetchall()
+
+            # Build dependency graph for topological sort
+            tables = set()
+            graph = {}
+            for fk in foreign_keys:
+                tables.add(fk["table_name"])
+                tables.add(fk["referenced_table"])
+                if fk["table_name"] not in graph:
+                    graph[fk["table_name"]] = set()
+                graph[fk["table_name"]].add(fk["referenced_table"])
+
+            # Topological sort
+            table_order = self._topological_sort(tables, graph)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "foreign_keys": foreign_keys,
+                "table_order": table_order
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get FK dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def _topological_sort(self, nodes: set, graph: dict) -> List[str]:
+        """Perform topological sort on dependency graph"""
+        result = []
+        visited = set()
+        temp_mark = set()
+
+        def visit(node):
+            if node in temp_mark:
+                return  # Cycle detected, skip
+            if node not in visited:
+                temp_mark.add(node)
+                for dep in graph.get(node, []):
+                    visit(dep)
+                temp_mark.remove(node)
+                visited.add(node)
+                result.append(node)
+
+        for node in nodes:
+            if node not in visited:
+                visit(node)
+
+        return result

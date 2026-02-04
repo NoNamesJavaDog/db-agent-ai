@@ -53,6 +53,8 @@
 - **🇨🇳 中英双语** - 完美支持中文交互，告别语言障碍
 - **📊 版本感知** - 自动识别数据库版本，生成兼容的 SQL
 - **⚡ 实时反馈** - 工具调用过程透明可见，执行结果即时展示
+- **💾 会话管理** - 基于 SQLite 的对话历史持久化存储
+- **🔌 多连接管理** - 支持多个数据库连接，随时切换
 
 ---
 
@@ -105,6 +107,34 @@
          ⚠️ 有 2 个慢查询需要优化
 ```
 
+### 6. 在线数据库迁移
+```
+👤 用户: /migrate
+[选择: 2. 在线迁移]
+[选择源数据库: mysql-test]
+
+🤖 Agent: 正在分析源数据库 mysql-test...
+         发现 7 个表, 3 个视图, 3 个存储过程, 3 个函数, 3 个触发器
+
+         迁移计划：
+         | # | 类型 | 对象 | 状态 |
+         |---|------|------|------|
+         | 1 | 表 | users | 待执行 |
+         | 2 | 表 | departments | 待执行 |
+         | ... | ... | ... | ... |
+
+         确认执行迁移？[是/否]
+
+👤 用户: 是
+
+🤖 Agent: 正在执行迁移...
+         ✓ 创建表 users
+         ✓ 创建表 departments
+         ✓ 创建表 employees
+         ...
+         迁移完成：19/19 个对象迁移成功
+```
+
 ---
 
 ## 🏗 系统架构
@@ -126,23 +156,24 @@
 │  │  └─────────────┘  └─────────────┘  └───────────────┘  │ │
 │  └───────────────────────────────────────────────────────┘ │
 │                          │                                  │
-│         ┌────────────────┼────────────────┐                │
-│         ▼                ▼                ▼                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │ LLM 客户端   │  │ 数据库工具   │  │   国际化     │        │
-│  │ ─────────── │  │ ─────────── │  │ ─────────── │        │
-│  │ • DeepSeek  │  │ • 查询执行   │  │ • 中文      │        │
-│  │ • OpenAI    │  │ • 表结构管理 │  │ • English   │        │
-│  │ • Claude    │  │ • 索引分析   │  └─────────────┘        │
-│  │ • Gemini    │  │ • 性能诊断   │                         │
-│  │ • Qwen      │  │ • EXPLAIN   │                         │
-│  │ • Ollama    │  └─────────────┘                         │
+│         ┌────────────────┼────────────────┬────────────┐   │
+│         ▼                ▼                ▼            ▼   │
+│  ┌─────────────┐  ┌─────────────┐  ┌───────┐ ┌──────────┐ │
+│  │ LLM 客户端   │  │ 数据库工具   │  │ 国际化 │ │ 数据存储  │ │
+│  │ ─────────── │  │ ─────────── │  └───────┘ │ ──────── │ │
+│  │ • DeepSeek  │  │ • 查询执行   │            │ SQLite   │ │
+│  │ • OpenAI    │  │ • 表结构管理 │            │ • 会话   │ │
+│  │ • Claude    │  │ • 索引分析   │            │ • 消息   │ │
+│  │ • Gemini    │  │ • 对象迁移   │            │ • 连接   │ │
+│  │ • Qwen      │  │ • 性能诊断   │            │ • 配置   │ │
+│  │ • Ollama    │  └─────────────┘            └──────────┘ │
 │  └─────────────┘         │                                 │
 │                          ▼                                  │
 │                   ┌─────────────┐                          │
 │                   │ PostgreSQL  │                          │
 │                   │   MySQL     │                          │
 │                   │   Oracle    │                          │
+│                   │ SQL Server  │                          │
 │                   │   GaussDB   │                          │
 │                   └─────────────┘                          │
 └─────────────────────────────────────────────────────────────┘
@@ -156,6 +187,7 @@ ai_agent/
 │   ├── __init__.py                # 包导出
 │   ├── core/                      # 核心组件
 │   │   ├── agent.py               # SQLTuningAgent 智能体
+│   │   ├── migration_rules.py     # DDL 转换规则
 │   │   └── database/              # 数据库抽象层
 │   │       ├── base.py            # 基类（接口定义）
 │   │       ├── postgresql.py      # PostgreSQL 实现
@@ -170,6 +202,11 @@ ai_agent/
 │   │   ├── claude.py              # Anthropic Claude
 │   │   ├── gemini.py              # Google Gemini
 │   │   └── factory.py             # 客户端工厂
+│   ├── storage/                   # 数据持久化（SQLite）
+│   │   ├── __init__.py            # 包导出
+│   │   ├── models.py              # 数据模型（会话、消息、连接等）
+│   │   ├── sqlite_storage.py      # SQLite 存储实现
+│   │   └── encryption.py          # 密码加密工具
 │   ├── api/                       # API 服务
 │   │   └── server.py              # FastAPI 应用
 │   ├── cli/                       # 命令行界面
@@ -177,8 +214,6 @@ ai_agent/
 │   │   └── config.py              # 配置管理
 │   └── i18n/                      # 国际化
 │       └── translations.py        # 翻译文件
-├── config/                        # 配置文件
-│   └── config.ini                 # 主配置文件
 ├── scripts/                       # 启动脚本
 │   ├── start.sh                   # Linux/macOS
 │   └── start.bat                  # Windows
@@ -384,7 +419,19 @@ De> 列出所有表
 |------|------|
 | `/help` | 显示帮助信息 |
 | `/file [路径]` | 加载SQL文件进行分析 |
-| `/model` | 切换 AI 模型 |
+| `/migrate` | 数据库迁移向导（文件导入或在线迁移） |
+| `/sessions` | 列出所有会话 |
+| `/session new` | 创建新会话 |
+| `/session use <id/名称>` | 切换到指定会话 |
+| `/session delete <id/名称>` | 删除会话 |
+| `/session rename <名称>` | 重命名当前会话 |
+| `/connections` | 列出所有数据库连接 |
+| `/connection add` | 添加新的数据库连接 |
+| `/connection use <名称>` | 切换到指定数据库连接 |
+| `/providers` | 列出所有 AI 模型配置 |
+| `/provider add` | 添加新的 AI 模型配置 |
+| `/provider use <名称>` | 切换 AI 模型 |
+| `/model` | 快速切换 AI 模型 |
 | `/language` | 切换语言（中/英） |
 | `/reset` | 重置对话历史 |
 | `/history` | 查看对话历史 |
@@ -587,9 +634,106 @@ De> 执行第2条查询
     [AI 记得上下文，自动分析这 10 个商品]
 ```
 
-### 场景七：异构数据库对象迁移
+### 场景七：在线数据库迁移
 
-**场景：将 Oracle 数据库对象迁移到 GaussDB**
+**场景：将 MySQL 数据库对象在线迁移到 PostgreSQL**
+
+使用 `/migrate` 命令进行数据库之间的在线迁移。DB Agent 会分析源数据库、创建迁移计划、并实时跟踪迁移进度。
+
+```
+# 首先，添加两个数据库连接
+De> /connection add
+[配置 MySQL 源数据库]
+
+De> /connection add
+[配置 PostgreSQL 目标数据库]
+
+# 切换到目标数据库
+De> /connection use postgres-target
+✓ 已切换到连接 [postgres-target]
+
+# 启动迁移向导
+De> /migrate
+1. 文件导入迁移 - 从 SQL 文件导入并转换
+2. 在线迁移 - 直接从源数据库迁移到目标数据库
+
+选择: 2
+
+# 选择源数据库
+可用的源数据库连接：
+| # | 名称 | 类型 | 主机 | 数据库 |
+|---|------|------|------|--------|
+| 1 | mysql-prod | MySQL | 192.168.1.100 | myapp |
+
+选择源数据库连接: 1
+
+迁移方向：
+  mysql-prod (MySQL) → postgres-target (PostgreSQL)
+
+确认开始迁移？[y/n]: y
+
+🤖 Agent: 正在分析源数据库 mysql-prod...
+
+       **源数据库分析：**
+       | 对象类型 | 数量 |
+       |----------|------|
+       | 表 | 7 |
+       | 视图 | 3 |
+       | 存储过程 | 3 |
+       | 函数 | 3 |
+       | 触发器 | 3 |
+       | 索引 | 12 |
+
+       **迁移计划：**
+       将按依赖顺序创建对象：
+       1. 表（按外键顺序）
+       2. 索引
+       3. 视图
+       4. 函数
+       5. 存储过程
+       6. 触发器
+
+       **DDL 转换预览：**
+       | MySQL | PostgreSQL |
+       |-------|------------|
+       | INT AUTO_INCREMENT | SERIAL |
+       | VARCHAR(100) | VARCHAR(100) |
+       | DATETIME | TIMESTAMP |
+       | TINYINT(1) | BOOLEAN |
+       | ENUM(...) | VARCHAR + CHECK |
+
+       准备执行 31 个迁移项，确认？[是/否]
+
+👤 用户: 是
+
+🤖 Agent: 正在执行迁移...
+       ✓ [1/31] 创建表 users
+       ✓ [2/31] 创建表 departments
+       ✓ [3/31] 创建表 employees
+       ...
+       ✓ [31/31] 创建触发器 tr_audit
+
+       **迁移完成！**
+       - 总计：31 项
+       - 成功：31
+       - 失败：0
+       - 跳过：0
+
+       **验证：**
+       正在比对源数据库和目标数据库...
+       所有对象迁移成功！
+```
+
+**支持的在线迁移路径：**
+- MySQL → PostgreSQL / GaussDB / Oracle / SQL Server
+- PostgreSQL → MySQL / GaussDB / Oracle / SQL Server
+- Oracle → PostgreSQL / MySQL / GaussDB / SQL Server
+- SQL Server → PostgreSQL / MySQL / GaussDB / Oracle
+- GaussDB → PostgreSQL / MySQL / Oracle / SQL Server
+
+### 场景八：基于文件的数据库迁移
+
+**场景：使用 DDL 文件将 Oracle 数据库对象迁移到 GaussDB**
 
 使用 `/file` 命令加载 Oracle DDL 脚本，让 AI 自动转换为目标数据库语法并执行。
 
@@ -1058,7 +1202,19 @@ Agent 自动检测数据库版本，生成兼容的 SQL：
 **A:** 可以。在配置文件中填写远程数据库的地址和凭据即可。请确保网络可达且防火墙允许连接。
 
 ### Q: 支持多数据库切换吗？
-**A:** 目前一个会话连接一个数据库。如需切换数据库，请重启程序并修改配置。
+**A:** 支持！你可以管理多个数据库连接，并在运行时自由切换：
+```
+/connection add           # 添加新连接
+/connections              # 列出所有连接
+/connection use <名称>    # 切换到其他数据库
+```
+
+### Q: 对话历史会保存吗？
+**A:** 会的，所有对话都会自动保存到本地 SQLite 数据库中。你可以：
+- 使用 `/session use <名称>` 继续之前的会话
+- 使用 `/sessions` 查看所有会话
+- 使用 `/session new` 创建新会话
+- 重启程序后对话历史仍然保留
 
 ### Q: 如何处理大结果集？
 **A:** Agent 会自动限制返回的数据量。如需查看更多数据，可以明确告诉 Agent 你需要多少条记录。
@@ -1095,6 +1251,8 @@ performance_schema = ON
 
 Agent 可自动调用以下数据库工具：
 
+### 查询与操作工具
+
 | 工具 | 说明 | 用途 |
 |------|------|------|
 | `list_tables` | 列出所有表 | 了解数据库结构 |
@@ -1102,6 +1260,11 @@ Agent 可自动调用以下数据库工具：
 | `get_sample_data` | 获取示例数据 | 了解数据格式 |
 | `execute_sql` | 执行任意 SQL | 增删改查操作 |
 | `execute_safe_query` | 执行只读查询 | 安全查询数据 |
+
+### 性能工具
+
+| 工具 | 说明 | 用途 |
+|------|------|------|
 | `run_explain` | 分析执行计划 | 性能诊断 |
 | `check_index_usage` | 检查索引使用 | 索引优化 |
 | `get_table_stats` | 获取表统计 | 健康检查 |
@@ -1109,6 +1272,17 @@ Agent 可自动调用以下数据库工具：
 | `analyze_table` | 更新统计信息 | 维护优化 |
 | `identify_slow_queries` | 识别慢查询 | 性能诊断 |
 | `get_running_queries` | 查看运行中查询 | 实时监控 |
+
+### 迁移工具
+
+| 工具 | 说明 | 用途 |
+|------|------|------|
+| `analyze_source_database` | 分析源数据库对象 | 迁移规划 |
+| `create_migration_plan` | 创建迁移计划并转换DDL | 迁移准备 |
+| `execute_migration_batch` | 批量执行迁移项 | 迁移执行 |
+| `compare_databases` | 比对源库和目标库 | 迁移验证 |
+| `generate_migration_report` | 生成迁移报告 | 迁移文档 |
+| `get_migration_status` | 获取迁移进度 | 进度跟踪 |
 
 ---
 

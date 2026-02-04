@@ -106,14 +106,26 @@ class OpenAICompatibleClient(BaseLLMClient):
         # Handle tool_calls - finish_reason might be "tool_calls" or "stop" with tool_calls present
         if message.tool_calls:
             result["finish_reason"] = "tool_calls"
-            result["tool_calls"] = [
-                {
+            tool_calls_list = []
+            for tc in message.tool_calls:
+                try:
+                    arguments = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse tool arguments: {tc.function.arguments}, error: {e}")
+                    # Try to fix common JSON issues (e.g., single quotes, trailing commas)
+                    try:
+                        # Replace single quotes with double quotes
+                        fixed_args = tc.function.arguments.replace("'", '"')
+                        arguments = json.loads(fixed_args)
+                    except json.JSONDecodeError:
+                        arguments = {"raw_arguments": tc.function.arguments}
+
+                tool_calls_list.append({
                     "id": tc.id,
                     "name": tc.function.name,
-                    "arguments": json.loads(tc.function.arguments) if tc.function.arguments else {}
-                }
-                for tc in message.tool_calls
-            ]
+                    "arguments": arguments
+                })
+            result["tool_calls"] = tool_calls_list
 
         return result
 

@@ -4,7 +4,7 @@ GaussDB database tools using pg8000 driver (supports sha256 authentication on Wi
 """
 import pg8000
 import pg8000.native
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
 import re
 from db_agent.i18n import t
@@ -949,3 +949,442 @@ class GaussDBTools(BaseDatabaseTools):
             return {"status": "error", "error": str(e)}
         finally:
             conn.close()
+
+    # ==================== Migration Support Methods ====================
+
+    def get_all_objects(self, schema: str = None, object_types: List[str] = None) -> Dict[str, Any]:
+        """Get all database objects for migration"""
+        schema = schema or "public"
+        logger.info(f"Getting all objects from schema: {schema}")
+
+        if object_types is None:
+            object_types = ["table", "view", "index", "sequence", "procedure", "function", "trigger", "constraint"]
+
+        result = {
+            "status": "success",
+            "schema": schema,
+            "mode": "distributed" if self._is_distributed else "centralized",
+            "objects": {}
+        }
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # Get tables (GaussDB uses pg_tables like PostgreSQL)
+            if "table" in object_types:
+                cur.execute("""
+                    SELECT
+                        t.tablename as name,
+                        t.schemaname as schema,
+                        COALESCE(s.n_live_tup, 0) as row_count,
+                        pg_total_relation_size(t.schemaname||'.'||t.tablename) as size_bytes
+                    FROM pg_tables t
+                    LEFT JOIN pg_stat_user_tables s ON t.schemaname = s.schemaname AND t.tablename = s.relname
+                    WHERE t.schemaname = %s
+                    ORDER BY t.tablename
+                """, (schema,))
+                columns = [desc[0] for desc in cur.description]
+                result["objects"]["tables"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get views
+            if "view" in object_types:
+                cur.execute("""
+                    SELECT
+                        viewname as name,
+                        schemaname as schema,
+                        definition
+                    FROM pg_views
+                    WHERE schemaname = %s
+                    ORDER BY viewname
+                """, (schema,))
+                columns = [desc[0] for desc in cur.description]
+                result["objects"]["views"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get indexes
+            if "index" in object_types:
+                cur.execute("""
+                    SELECT
+                        i.indexname as name,
+                        i.tablename as table_name,
+                        i.schemaname as schema,
+                        i.indexdef as definition,
+                        idx.indisunique as is_unique,
+                        idx.indisprimary as is_primary
+                    FROM pg_indexes i
+                    JOIN pg_class c ON c.relname = i.indexname
+                    JOIN pg_index idx ON idx.indexrelid = c.oid
+                    WHERE i.schemaname = %s
+                    ORDER BY i.tablename, i.indexname
+                """, (schema,))
+                columns = [desc[0] for desc in cur.description]
+                result["objects"]["indexes"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get sequences
+            if "sequence" in object_types:
+                cur.execute("""
+                    SELECT
+                        sequencename as name,
+                        schemaname as schema,
+                        start_value,
+                        min_value,
+                        max_value,
+                        increment_by,
+                        cycle as is_cycle,
+                        cache_size
+                    FROM pg_sequences
+                    WHERE schemaname = %s
+                    ORDER BY sequencename
+                """, (schema,))
+                columns = [desc[0] for desc in cur.description]
+                result["objects"]["sequences"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get functions/procedures
+            if "function" in object_types or "procedure" in object_types:
+                cur.execute("""
+                    SELECT
+                        p.proname as name,
+                        n.nspname as schema,
+                        CASE p.prokind
+                            WHEN 'f' THEN 'function'
+                            WHEN 'p' THEN 'procedure'
+                            WHEN 'a' THEN 'aggregate'
+                            WHEN 'w' THEN 'window'
+                            ELSE 'function'
+                        END as type,
+                        pg_get_function_arguments(p.oid) as parameters,
+                        pg_get_function_result(p.oid) as return_type,
+                        l.lanname as language
+                    FROM pg_proc p
+                    JOIN pg_namespace n ON p.pronamespace = n.oid
+                    JOIN pg_language l ON p.prolang = l.oid
+                    WHERE n.nspname = %s
+                    ORDER BY p.proname
+                """, (schema,))
+                columns = [desc[0] for desc in cur.description]
+                all_routines = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+                if "function" in object_types:
+                    result["objects"]["functions"] = [r for r in all_routines if r["type"] == "function"]
+                if "procedure" in object_types:
+                    result["objects"]["procedures"] = [r for r in all_routines if r["type"] == "procedure"]
+
+            # Get triggers
+            if "trigger" in object_types:
+                cur.execute("""
+                    SELECT
+                        t.tgname as name,
+                        c.relname as table_name,
+                        n.nspname as schema,
+                        pg_get_triggerdef(t.oid) as definition
+                    FROM pg_trigger t
+                    JOIN pg_class c ON t.tgrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = %s
+                      AND NOT t.tgisinternal
+                    ORDER BY c.relname, t.tgname
+                """, (schema,))
+                columns = [desc[0] for desc in cur.description]
+                result["objects"]["triggers"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Get constraints
+            if "constraint" in object_types:
+                cur.execute("""
+                    SELECT
+                        con.conname as name,
+                        c.relname as table_name,
+                        n.nspname as schema,
+                        CASE con.contype
+                            WHEN 'p' THEN 'PRIMARY KEY'
+                            WHEN 'f' THEN 'FOREIGN KEY'
+                            WHEN 'u' THEN 'UNIQUE'
+                            WHEN 'c' THEN 'CHECK'
+                        END as constraint_type,
+                        pg_get_constraintdef(con.oid) as definition
+                    FROM pg_constraint con
+                    JOIN pg_class c ON con.conrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = %s
+                    ORDER BY c.relname, con.conname
+                """, (schema,))
+                columns = [desc[0] for desc in cur.description]
+                result["objects"]["constraints"] = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Calculate totals
+            total_count = sum(len(result["objects"].get(k, [])) for k in result["objects"])
+            result["total_count"] = total_count
+
+            logger.info(f"Found {total_count} total objects")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get all objects: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_ddl(self, object_type: str, object_name: str, schema: str = None) -> Dict[str, Any]:
+        """Get DDL for a specific database object"""
+        schema = schema or "public"
+        logger.info(f"Getting DDL for {object_type}: {schema}.{object_name}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            ddl = None
+            dependencies = []
+
+            if object_type == "table":
+                # Build table DDL manually
+                cur.execute("""
+                    SELECT
+                        'CREATE TABLE ' || quote_ident(%s) || '.' || quote_ident(%s) || ' (' ||
+                        string_agg(
+                            quote_ident(column_name) || ' ' ||
+                            data_type ||
+                            CASE
+                                WHEN character_maximum_length IS NOT NULL
+                                THEN '(' || character_maximum_length || ')'
+                                ELSE ''
+                            END ||
+                            CASE WHEN is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END ||
+                            CASE WHEN column_default IS NOT NULL THEN ' DEFAULT ' || column_default ELSE '' END,
+                            ', ' ORDER BY ordinal_position
+                        ) || ');'
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                """, (schema, object_name, schema, object_name))
+                result = cur.fetchone()
+                ddl = result[0] if result else None
+
+                # Get FK dependencies
+                cur.execute("""
+                    SELECT DISTINCT ccu.table_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.constraint_column_usage ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                        AND tc.table_schema = %s
+                        AND tc.table_name = %s
+                """, (schema, object_name))
+                dependencies = [{"type": "table", "name": row[0]} for row in cur.fetchall()]
+
+            elif object_type == "view":
+                cur.execute("""
+                    SELECT 'CREATE OR REPLACE VIEW ' || quote_ident(%s) || '.' || quote_ident(viewname) || ' AS ' || definition
+                    FROM pg_views
+                    WHERE schemaname = %s AND viewname = %s
+                """, (schema, schema, object_name))
+                result = cur.fetchone()
+                ddl = result[0] if result else None
+
+            elif object_type == "index":
+                cur.execute("""
+                    SELECT indexdef
+                    FROM pg_indexes
+                    WHERE schemaname = %s AND indexname = %s
+                """, (schema, object_name))
+                result = cur.fetchone()
+                ddl = result[0] if result else None
+
+            elif object_type == "sequence":
+                cur.execute("""
+                    SELECT 'CREATE SEQUENCE ' || quote_ident(%s) || '.' || quote_ident(sequencename) ||
+                           ' START ' || start_value ||
+                           ' INCREMENT ' || increment_by ||
+                           ' MINVALUE ' || min_value ||
+                           ' MAXVALUE ' || max_value ||
+                           CASE WHEN cycle THEN ' CYCLE' ELSE ' NO CYCLE' END ||
+                           ' CACHE ' || cache_size || ';'
+                    FROM pg_sequences
+                    WHERE schemaname = %s AND sequencename = %s
+                """, (schema, schema, object_name))
+                result = cur.fetchone()
+                ddl = result[0] if result else None
+
+            elif object_type in ("function", "procedure"):
+                cur.execute("""
+                    SELECT pg_get_functiondef(p.oid)
+                    FROM pg_proc p
+                    JOIN pg_namespace n ON p.pronamespace = n.oid
+                    WHERE n.nspname = %s AND p.proname = %s
+                """, (schema, object_name))
+                result = cur.fetchone()
+                ddl = result[0] if result else None
+
+            elif object_type == "trigger":
+                cur.execute("""
+                    SELECT pg_get_triggerdef(t.oid, true)
+                    FROM pg_trigger t
+                    JOIN pg_class c ON t.tgrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = %s AND t.tgname = %s
+                """, (schema, object_name))
+                result = cur.fetchone()
+                ddl = result[0] if result else None
+
+            if ddl:
+                return {
+                    "status": "success",
+                    "object_type": object_type,
+                    "object_name": object_name,
+                    "schema": schema,
+                    "ddl": ddl,
+                    "dependencies": dependencies
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Object not found: {object_type} {schema}.{object_name}"
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get DDL: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_object_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get object dependencies in the database"""
+        schema = schema or "public"
+        logger.info(f"Getting object dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            # Get dependencies from pg_depend (similar to PostgreSQL)
+            cur.execute("""
+                SELECT DISTINCT
+                    CASE dc.relkind
+                        WHEN 'r' THEN 'table'
+                        WHEN 'v' THEN 'view'
+                        WHEN 'i' THEN 'index'
+                        WHEN 'S' THEN 'sequence'
+                        ELSE 'other'
+                    END as object_type,
+                    dc.relname as object_name,
+                    CASE rc.relkind
+                        WHEN 'r' THEN 'table'
+                        WHEN 'v' THEN 'view'
+                        WHEN 'i' THEN 'index'
+                        WHEN 'S' THEN 'sequence'
+                        ELSE 'other'
+                    END as depends_on_type,
+                    rc.relname as depends_on_name
+                FROM pg_depend d
+                JOIN pg_class dc ON d.classid = 'pg_class'::regclass AND d.objid = dc.oid
+                JOIN pg_class rc ON d.refclassid = 'pg_class'::regclass AND d.refobjid = rc.oid
+                JOIN pg_namespace dn ON dc.relnamespace = dn.oid
+                JOIN pg_namespace rn ON rc.relnamespace = rn.oid
+                WHERE dn.nspname = %s
+                  AND rn.nspname = %s
+                  AND d.deptype IN ('n', 'a')
+                  AND dc.relname != rc.relname
+                ORDER BY dc.relname
+            """, (schema, schema))
+
+            columns = [desc[0] for desc in cur.description]
+            dependencies = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Build dependency graph
+            dependency_graph = {}
+            for dep in dependencies:
+                obj_name = dep["object_name"]
+                dep_name = dep["depends_on_name"]
+                if obj_name not in dependency_graph:
+                    dependency_graph[obj_name] = []
+                dependency_graph[obj_name].append(dep_name)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "dependencies": dependencies,
+                "dependency_graph": dependency_graph
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_foreign_key_dependencies(self, schema: str = None) -> Dict[str, Any]:
+        """Get foreign key dependencies between tables"""
+        schema = schema or "public"
+        logger.info(f"Getting FK dependencies for schema: {schema}")
+
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT
+                    tc.constraint_name,
+                    tc.table_name,
+                    kcu.column_name,
+                    ccu.table_name AS referenced_table,
+                    ccu.column_name AS referenced_column
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage ccu
+                    ON ccu.constraint_name = tc.constraint_name
+                    AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                    AND tc.table_schema = %s
+                ORDER BY tc.table_name
+            """, (schema,))
+
+            columns = [desc[0] for desc in cur.description]
+            foreign_keys = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Build dependency graph for topological sort
+            tables = set()
+            graph = {}
+            for fk in foreign_keys:
+                tables.add(fk["table_name"])
+                tables.add(fk["referenced_table"])
+                if fk["table_name"] not in graph:
+                    graph[fk["table_name"]] = set()
+                graph[fk["table_name"]].add(fk["referenced_table"])
+
+            # Topological sort
+            table_order = self._topological_sort(tables, graph)
+
+            return {
+                "status": "success",
+                "schema": schema,
+                "foreign_keys": foreign_keys,
+                "table_order": table_order
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get FK dependencies: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            conn.close()
+
+    def _topological_sort(self, nodes: set, graph: dict) -> List[str]:
+        """Perform topological sort on dependency graph"""
+        result = []
+        visited = set()
+        temp_mark = set()
+
+        def visit(node):
+            if node in temp_mark:
+                return  # Cycle detected, skip
+            if node not in visited:
+                temp_mark.add(node)
+                for dep in graph.get(node, []):
+                    visit(dep)
+                temp_mark.remove(node)
+                visited.add(node)
+                result.append(node)
+
+        for node in nodes:
+            if node not in visited:
+                visit(node)
+
+        return result
