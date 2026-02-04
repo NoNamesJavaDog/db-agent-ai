@@ -53,6 +53,8 @@
 - **Bilingual** - Full support for English and Chinese interactions
 - **Version Aware** - Auto-detects database version, generates compatible SQL
 - **Real-time Feedback** - Transparent tool execution with instant results
+- **Session Management** - Persistent conversation history with SQLite storage
+- **Multi-Connection** - Manage multiple database connections, switch on the fly
 
 ---
 
@@ -105,6 +107,34 @@ Agent: Health Report:
        Found 2 slow queries needing optimization
 ```
 
+### 6. Online Database Migration
+```
+User: /migrate
+[Select: 2. Online migration]
+[Select source database: mysql-test]
+
+Agent: Analyzing source database mysql-test...
+       Found 7 tables, 3 views, 3 procedures, 3 functions, 3 triggers
+
+       Migration Plan:
+       | # | Type | Object | Status |
+       |---|------|--------|--------|
+       | 1 | table | users | pending |
+       | 2 | table | departments | pending |
+       | ... | ... | ... | ... |
+
+       Confirm to execute migration? [Yes/No]
+
+User: Yes
+
+Agent: Executing migration...
+       ✓ Created table users
+       ✓ Created table departments
+       ✓ Created table employees
+       ...
+       Migration completed: 19/19 objects migrated successfully
+```
+
 ---
 
 ## Architecture
@@ -127,23 +157,24 @@ Agent: Health Report:
 |  |  +-----------+  +----------+  +------------+  |          |
 |  +-----------------------------------------------+          |
 |                |                                             |
-|        +-------+-------+-------+                             |
-|        v               v       v                             |
-|  +-----------+  +-----------+  +-----------+                |
-|  |    LLM    |  | Database  |  |   i18n    |                |
-|  |  Clients  |  |   Tools   |  |           |                |
-|  | --------- |  | --------- |  | --------- |                |
-|  | DeepSeek  |  | Query     |  | English   |                |
-|  | OpenAI    |  | Schema    |  | Chinese   |                |
-|  | Claude    |  | Index     |  +-----------+                |
-|  | Gemini    |  | EXPLAIN   |                               |
-|  | Qwen      |  +-----------+                               |
+|        +-------+-------+-------+-------+                     |
+|        v               v       v       v                     |
+|  +-----------+  +-----------+  +-----+ +------------+       |
+|  |    LLM    |  | Database  |  |i18n | |  Storage   |       |
+|  |  Clients  |  |   Tools   |  +-----+ | ---------- |       |
+|  | --------- |  | --------- |          | SQLite DB  |       |
+|  | DeepSeek  |  | Query     |          | - Sessions |       |
+|  | OpenAI    |  | Schema    |          | - Messages |       |
+|  | Claude    |  | Index     |          | - Configs  |       |
+|  | Gemini    |  | Migration |          | - Tasks    |       |
+|  | Qwen      |  +-----------+          +------------+       |
 |  | Ollama    |        |                                     |
 |  +-----------+        v                                     |
 |                +-------------+                              |
 |                | PostgreSQL  |                              |
 |                |    MySQL    |                              |
 |                |   Oracle    |                              |
+|                | SQL Server  |                              |
 |                |   GaussDB   |                              |
 |                +-------------+                              |
 +-------------------------------------------------------------+
@@ -157,6 +188,7 @@ ai_agent/
 │   ├── __init__.py                # Package exports
 │   ├── core/                      # Core components
 │   │   ├── agent.py               # SQLTuningAgent
+│   │   ├── migration_rules.py     # DDL conversion rules
 │   │   └── database/              # Database abstraction layer
 │   │       ├── base.py            # Base class (interface)
 │   │       ├── postgresql.py      # PostgreSQL implementation
@@ -171,6 +203,11 @@ ai_agent/
 │   │   ├── claude.py              # Anthropic Claude
 │   │   ├── gemini.py              # Google Gemini
 │   │   └── factory.py             # Client factory
+│   ├── storage/                   # Data persistence (SQLite)
+│   │   ├── __init__.py            # Package exports
+│   │   ├── models.py              # Data models (Session, Message, Connection, etc.)
+│   │   ├── sqlite_storage.py      # SQLite storage implementation
+│   │   └── encryption.py          # Password encryption utilities
 │   ├── api/                       # API service
 │   │   └── server.py              # FastAPI application
 │   ├── cli/                       # Command line interface
@@ -178,8 +215,6 @@ ai_agent/
 │   │   └── config.py              # Configuration manager
 │   └── i18n/                      # Internationalization
 │       └── translations.py        # Translation files
-├── config/                        # Configuration files
-│   └── config.ini                 # Main configuration
 ├── scripts/                       # Startup scripts
 │   ├── start.sh                   # Linux/macOS
 │   └── start.bat                  # Windows
@@ -384,7 +419,19 @@ De> list all tables
 |---------|-------------|
 | `/help` | Show help information |
 | `/file [path]` | Load SQL file for analysis |
-| `/model` | Switch AI model |
+| `/migrate` | Database migration wizard (file import or online migration) |
+| `/sessions` | List all sessions |
+| `/session new` | Create a new session |
+| `/session use <id/name>` | Switch to a session |
+| `/session delete <id/name>` | Delete a session |
+| `/session rename <name>` | Rename current session |
+| `/connections` | List all database connections |
+| `/connection add` | Add a new database connection |
+| `/connection use <name>` | Switch to a database connection |
+| `/providers` | List all AI model configurations |
+| `/provider add` | Add a new AI model configuration |
+| `/provider use <name>` | Switch to an AI model |
+| `/model` | Quick switch AI model |
 | `/language` | Switch language (EN/ZH) |
 | `/reset` | Reset conversation history |
 | `/history` | View conversation history |
@@ -587,9 +634,106 @@ Agent: Analyzing purchase regions for these top products...
     [AI remembers context, automatically analyzes these 10 products]
 ```
 
-### Case 7: Heterogeneous Database Migration
+### Case 7: Online Database Migration
 
-**Scenario: Migrate Oracle objects to GaussDB**
+**Scenario: Migrate MySQL database objects to PostgreSQL**
+
+Use the `/migrate` command to perform online migration between databases. DB Agent will analyze the source database, create a migration plan, and execute the migration with real-time progress tracking.
+
+```
+# First, add both database connections
+De> /connection add
+[Configure MySQL source database]
+
+De> /connection add
+[Configure PostgreSQL target database]
+
+# Switch to target database
+De> /connection use postgres-target
+✓ Switched to connection [postgres-target]
+
+# Start migration wizard
+De> /migrate
+1. File import migration - Import from SQL file and convert
+2. Online migration - Migrate directly from source to target database
+
+Select: 2
+
+# Select source database
+Available source connections:
+| # | Name | Type | Host | Database |
+|---|------|------|------|----------|
+| 1 | mysql-prod | MySQL | 192.168.1.100 | myapp |
+
+Select source connection: 1
+
+Migration direction:
+  mysql-prod (MySQL) → postgres-target (PostgreSQL)
+
+Confirm to start migration? [y/n]: y
+
+Agent: Analyzing source database mysql-prod...
+
+       **Source Database Analysis:**
+       | Object Type | Count |
+       |-------------|-------|
+       | Tables | 7 |
+       | Views | 3 |
+       | Procedures | 3 |
+       | Functions | 3 |
+       | Triggers | 3 |
+       | Indexes | 12 |
+
+       **Migration Plan:**
+       Objects will be created in dependency order:
+       1. Tables (with foreign key ordering)
+       2. Indexes
+       3. Views
+       4. Functions
+       5. Procedures
+       6. Triggers
+
+       **DDL Conversion Preview:**
+       | MySQL | PostgreSQL |
+       |-------|------------|
+       | INT AUTO_INCREMENT | SERIAL |
+       | VARCHAR(100) | VARCHAR(100) |
+       | DATETIME | TIMESTAMP |
+       | TINYINT(1) | BOOLEAN |
+       | ENUM(...) | VARCHAR + CHECK |
+
+       Ready to execute 31 migration items. Confirm? [Yes/No]
+
+User: Yes
+
+Agent: Executing migration...
+       ✓ [1/31] Created table users
+       ✓ [2/31] Created table departments
+       ✓ [3/31] Created table employees
+       ...
+       ✓ [31/31] Created trigger tr_audit
+
+       **Migration Complete!**
+       - Total: 31 items
+       - Successful: 31
+       - Failed: 0
+       - Skipped: 0
+
+       **Verification:**
+       Comparing source and target databases...
+       All objects migrated successfully!
+```
+
+**Supported Online Migration Paths:**
+- MySQL → PostgreSQL / GaussDB / Oracle / SQL Server
+- PostgreSQL → MySQL / GaussDB / Oracle / SQL Server
+- Oracle → PostgreSQL / MySQL / GaussDB / SQL Server
+- SQL Server → PostgreSQL / MySQL / GaussDB / Oracle
+- GaussDB → PostgreSQL / MySQL / Oracle / SQL Server
+
+### Case 8: File-Based Database Migration
+
+**Scenario: Migrate Oracle objects to GaussDB using DDL files**
 
 Use the `/file` command to load Oracle DDL scripts and let AI convert them to the target database syntax.
 
@@ -1061,7 +1205,19 @@ Agent: Successfully inserted 95 new records (5 duplicates skipped).
 **A:** Yes. Enter remote database credentials in the config file. Ensure network connectivity and firewall rules allow the connection.
 
 ### Q: Does it support multiple database switching?
-**A:** Currently one session connects to one database. To switch databases, restart the program with updated config.
+**A:** Yes! You can manage multiple database connections and switch between them without restarting:
+```
+/connection add           # Add a new connection
+/connections              # List all connections
+/connection use <name>    # Switch to a different database
+```
+
+### Q: Are conversation histories saved?
+**A:** Yes, all conversations are automatically saved to a local SQLite database. You can:
+- Continue previous sessions with `/session use <name>`
+- View all sessions with `/sessions`
+- Create new sessions with `/session new`
+- Conversation history is preserved even after restarting the program
 
 ### Q: How are large result sets handled?
 **A:** Agent automatically limits returned data. If you need more records, explicitly tell the Agent how many you need.
@@ -1098,6 +1254,8 @@ performance_schema = ON
 
 The Agent can automatically invoke these database tools:
 
+### Query & Manipulation Tools
+
 | Tool | Description | Use Case |
 |------|-------------|----------|
 | `list_tables` | List all tables | Explore database structure |
@@ -1105,6 +1263,11 @@ The Agent can automatically invoke these database tools:
 | `get_sample_data` | Get sample data | Understand data format |
 | `execute_sql` | Execute any SQL | CRUD operations |
 | `execute_safe_query` | Execute read-only query | Safe data queries |
+
+### Performance Tools
+
+| Tool | Description | Use Case |
+|------|-------------|----------|
 | `run_explain` | Analyze execution plan | Performance diagnostics |
 | `check_index_usage` | Check index usage | Index optimization |
 | `get_table_stats` | Get table statistics | Health checks |
@@ -1112,6 +1275,17 @@ The Agent can automatically invoke these database tools:
 | `analyze_table` | Update statistics | Maintenance |
 | `identify_slow_queries` | Identify slow queries | Performance diagnostics |
 | `get_running_queries` | View running queries | Real-time monitoring |
+
+### Migration Tools
+
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| `analyze_source_database` | Analyze source database objects | Migration planning |
+| `create_migration_plan` | Create migration plan with DDL conversion | Migration preparation |
+| `execute_migration_batch` | Execute migration items in batch | Migration execution |
+| `compare_databases` | Compare source and target databases | Migration verification |
+| `generate_migration_report` | Generate migration report | Migration documentation |
+| `get_migration_status` | Get migration progress | Progress tracking |
 
 ---
 
