@@ -2,6 +2,7 @@
 SQL Tuning AI Agent - Core Engine
 """
 import json
+import time
 from typing import Dict, List, Any, TYPE_CHECKING
 import logging
 from db_agent.llm import BaseLLMClient
@@ -13,7 +14,9 @@ from .context_compression import ContextCompressor
 from db_agent.storage.models import MigrationTask, MigrationItem
 
 if TYPE_CHECKING:
-    from db_agent.storage import SQLiteStorage
+    from db_agent.storage import SQLiteStorage, AuditService
+    from db_agent.mcp import MCPManager
+    from db_agent.skills import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,8 @@ class SQLTuningAgent:
         db_config: Dict[str, Any],
         language: str = "zh",
         storage: "SQLiteStorage" = None,
-        session_id: int = None
+        session_id: int = None,
+        mcp_manager: "MCPManager" = None
     ):
         """
         初始化AI Agent
@@ -38,10 +42,12 @@ class SQLTuningAgent:
             language: 界面语言 (zh/en)
             storage: SQLite storage instance for session persistence
             session_id: Session ID to associate with this agent
+            mcp_manager: MCP manager for external tool integration
         """
         self.llm_client = llm_client
         self.storage = storage
         self.session_id = session_id
+        self.mcp_manager = mcp_manager
 
         # Extract and remove db_type from config (default to postgresql for backward compatibility)
         db_config = db_config.copy()  # Don't modify the original
@@ -54,6 +60,9 @@ class SQLTuningAgent:
         self.conversation_history = []
         self.pending_operations = []  # 待确认的SQL操作队列
         self.language = language
+
+        # Skills 注册中心 (will be set by CLI)
+        self.skill_registry: "SkillRegistry" = None
 
         # 初始化系统提示和工具定义
         self._init_system_prompt()
@@ -68,9 +77,21 @@ class SQLTuningAgent:
             token_counter=self.token_counter
         )
 
+        # 迁移自动执行模式
+        self.migration_auto_execute = False
+
         # 中断控制
         self._interrupt_requested = False
         self._interrupted_state = None  # 保存被打断时的状态
+
+        # 审计日志服务
+        self.audit_service: "AuditService" = None
+        if self.storage:
+            from db_agent.storage import AuditService
+            self.audit_service = AuditService(self.storage)
+
+        # 当前连接ID（用于审计日志）
+        self._connection_id: int = None
 
         logger.info(f"AI Agent初始化完成: {llm_client.get_provider_name()} - {llm_client.get_model_name()} (DB: {db_type})")
 
@@ -117,11 +138,29 @@ class SQLTuningAgent:
             "model": self.llm_client.get_model_name()
         }
 
+    def set_connection_id(self, connection_id: int):
+        """设置当前数据库连接ID（用于审计日志）"""
+        self._connection_id = connection_id
+
+    def get_connection_id(self) -> int:
+        """获取当前数据库连接ID"""
+        return self._connection_id
+
     def set_language(self, language: str):
         """设置语言并更新系统提示和工具定义"""
         self.language = language
         i18n.lang = language  # 同步更新全局i18n语言
         self._init_system_prompt()
+
+    def refresh_system_prompt(self):
+        """
+        Refresh system prompt (call when skills/MCP configuration changes).
+
+        This method re-initializes the system prompt to include updated
+        skill and MCP tool descriptions.
+        """
+        self._init_system_prompt()
+        logger.info("System prompt refreshed with updated skills/MCP tools")
 
     def _init_system_prompt(self):
         """初始化系统提示(内部方法)"""
@@ -628,6 +667,18 @@ Remember: You are the user's database assistant, helping them directly operate t
 | " (双引号) | ` (反引号) |
 
 记住:你是用户的数据库助手,可以帮助他们直接操作数据库！遇到小错误时要有韧性，坚持完成任务！"""
+
+        # Dynamically add Skills description to system prompt
+        if self.skill_registry:
+            skills_prompt = self.skill_registry.get_skills_prompt()
+            if skills_prompt:
+                self.system_prompt += f"\n\n{skills_prompt}"
+
+        # Dynamically add MCP tools description to system prompt
+        if self.mcp_manager:
+            mcp_prompt = self.mcp_manager.get_tools_prompt()
+            if mcp_prompt:
+                self.system_prompt += f"\n\n{mcp_prompt}"
 
         # 初始化工具定义
         self._init_tools()
@@ -1280,16 +1331,92 @@ Remember: You are the user's database assistant, helping them directly operate t
                 }
             ]
 
+    def get_all_tools(self) -> List[Dict]:
+        """
+        获取所有可用工具，包括内置工具、MCP工具和Skill工具。
+
+        Returns:
+            工具定义列表（OpenAI function格式）
+        """
+        all_tools = self.tools.copy()
+
+        # 添加MCP工具
+        if self.mcp_manager:
+            mcp_tools = self.mcp_manager.get_all_tools()
+            all_tools.extend(mcp_tools)
+
+        # 添加Skill工具
+        if self.skill_registry:
+            skill_tools = self.skill_registry.get_skill_tools()
+            all_tools.extend(skill_tools)
+
+        return all_tools
+
+    def set_mcp_manager(self, mcp_manager: "MCPManager"):
+        """
+        设置MCP管理器。
+
+        Args:
+            mcp_manager: MCP管理器实例
+        """
+        self.mcp_manager = mcp_manager
+
+    def set_skill_registry(self, skill_registry: "SkillRegistry"):
+        """
+        设置Skill注册中心。
+
+        Args:
+            skill_registry: SkillRegistry实例
+        """
+        self.skill_registry = skill_registry
+
     def _execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具调用"""
         logger.info(f"执行工具: {tool_name}")
         logger.debug(f"输入参数: {tool_input}")
 
+        start_time = time.time()
+        result = None
+
         try:
+            # 检查是否为MCP工具
+            if self.mcp_manager and self.mcp_manager.is_mcp_tool(tool_name):
+                result = self.mcp_manager.call_tool_sync(tool_name, tool_input)
+                # 将MCP结果转换为标准格式
+                if result.get("status") == "success":
+                    result = {
+                        "status": "success",
+                        "content": result.get("content"),
+                        "source": "mcp"
+                    }
+                else:
+                    result = {
+                        "status": "error",
+                        "error": result.get("error", "Unknown MCP error"),
+                        "source": "mcp"
+                    }
+                self._log_tool_call(tool_name, tool_input, result, start_time)
+                return result
+
+            # 检查是否为Skill工具
+            if tool_name.startswith("skill_") and self.skill_registry:
+                skill_name = tool_name[6:]  # Remove 'skill_' prefix
+                arguments = tool_input.get("arguments", "")
+                result = self._execute_skill(skill_name, arguments)
+                self._log_tool_call(tool_name, tool_input, result, start_time)
+                return result
+
             if tool_name == "identify_slow_queries":
                 result = self.db_tools.identify_slow_queries(**tool_input)
             elif tool_name == "run_explain":
                 result = self.db_tools.run_explain(**tool_input)
+                # Log as SQL execution for run_explain
+                self._log_sql_execution(
+                    tool_input.get("sql", ""),
+                    "run_explain",
+                    result,
+                    start_time
+                )
             elif tool_name == "check_index_usage":
                 result = self.db_tools.check_index_usage(**tool_input)
             elif tool_name == "get_table_stats":
@@ -1327,11 +1454,25 @@ Remember: You are the user's database assistant, helping them directly operate t
                 else:
                     # 无性能问题，直接执行
                     result = self.db_tools.execute_safe_query(**tool_input)
+                    # Log as SQL execution
+                    self._log_sql_execution(sql, "execute_safe_query", result, start_time)
             elif tool_name == "execute_sql":
+                # 迁移自动执行模式：自动注入confirmed=True
+                if self.migration_auto_execute and not tool_input.get("confirmed"):
+                    tool_input["confirmed"] = True
                 result = self.db_tools.execute_sql(**tool_input)
                 # 如果需要确认，加入待确认队列
                 if result.get("status") == "pending_confirmation":
                     self.pending_operations.append({"type": "execute_sql", "input": tool_input})
+                else:
+                    # Log as SQL execution (only if actually executed)
+                    self._log_sql_execution(
+                        tool_input.get("sql", ""),
+                        "execute_sql",
+                        result,
+                        start_time,
+                        user_confirmed=tool_input.get("confirmed", False)
+                    )
             elif tool_name == "list_tables":
                 result = self.db_tools.list_tables(**tool_input)
             elif tool_name == "describe_table":
@@ -1364,12 +1505,86 @@ Remember: You are the user's database assistant, helping them directly operate t
             else:
                 result = {"status": "error", "error": t("db_unknown_tool", tool=tool_name)}
 
+            # Log tool call for non-SQL tools
+            if tool_name not in ("execute_sql", "execute_safe_query", "run_explain"):
+                self._log_tool_call(tool_name, tool_input, result, start_time)
+
             logger.info(f"工具执行完成: status={result.get('status')}")
             return result
 
         except Exception as e:
             logger.error(f"工具执行异常: {e}")
-            return {"status": "error", "error": str(e)}
+            error_result = {"status": "error", "error": str(e)}
+            # Log the error
+            self._log_tool_call(tool_name, tool_input, error_result, start_time)
+            return error_result
+
+    def _log_tool_call(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        result: Dict[str, Any],
+        start_time: float
+    ):
+        """Log a tool call to the audit service."""
+        if not self.audit_service:
+            return
+
+        try:
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            result_status = result.get("status", "unknown")
+            result_summary = None
+
+            if result_status == "error":
+                result_summary = result.get("error", "")[:500]  # Truncate long errors
+            elif "rows" in result:
+                result_summary = f"Returned {len(result.get('rows', []))} rows"
+            elif "tables" in result:
+                result_summary = f"Found {len(result.get('tables', []))} tables"
+
+            self.audit_service.log_tool_call(
+                session_id=self.session_id,
+                connection_id=self._connection_id,
+                tool_name=tool_name,
+                parameters=parameters,
+                result_status=result_status,
+                result_summary=result_summary,
+                execution_time_ms=execution_time_ms
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log tool call: {e}")
+
+    def _log_sql_execution(
+        self,
+        sql: str,
+        action: str,
+        result: Dict[str, Any],
+        start_time: float,
+        user_confirmed: bool = False
+    ):
+        """Log a SQL execution to the audit service."""
+        if not self.audit_service:
+            return
+
+        try:
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            result_status = result.get("status", "unknown")
+            affected_rows = result.get("affected_rows")
+            error_message = result.get("error") if result_status == "error" else None
+
+            self.audit_service.log_sql_execution(
+                session_id=self.session_id,
+                connection_id=self._connection_id,
+                sql=sql,
+                action=action,
+                result_status=result_status,
+                affected_rows=affected_rows,
+                error_message=error_message,
+                execution_time_ms=execution_time_ms,
+                user_confirmed=user_confirmed
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log SQL execution: {e}")
 
     # ==================== Interrupt Control Methods ====================
 
@@ -1524,8 +1739,11 @@ Remember: You are the user's database assistant, helping them directly operate t
             # 构建消息列表(包含system消息)
             messages = [{"role": "system", "content": self.system_prompt}] + self.conversation_history
 
+            # 获取所有工具（包括MCP工具）
+            all_tools = self.get_all_tools()
+
             # 调用LLM API (统一接口)
-            response = self.llm_client.chat(messages=messages, tools=self.tools)
+            response = self.llm_client.chat(messages=messages, tools=all_tools)
 
             finish_reason = response["finish_reason"]
             content = response["content"]
@@ -1796,6 +2014,51 @@ Remember: You are the user's database assistant, helping them directly operate t
         except Exception as e:
             logger.error(f"Failed to analyze source database: {e}")
             return {"status": "error", "error": str(e)}
+
+    def _execute_skill(self, skill_name: str, arguments: str = "") -> Dict[str, Any]:
+        """
+        执行Skill工具调用。
+
+        Args:
+            skill_name: Skill名称
+            arguments: 传递给Skill的参数
+
+        Returns:
+            执行结果字典
+        """
+        if not self.skill_registry:
+            return {
+                "status": "error",
+                "error": "Skill registry not initialized"
+            }
+
+        skill = self.skill_registry.get(skill_name)
+        if not skill:
+            return {
+                "status": "error",
+                "error": f"Skill not found: {skill_name}"
+            }
+
+        # Import executor here to avoid circular imports
+        from db_agent.skills import SkillExecutor
+
+        executor = SkillExecutor(self.skill_registry, session_id=str(self.session_id) if self.session_id else None)
+        result = executor.execute_skill(skill, arguments)
+
+        if result.get("status") == "success":
+            # Return the processed instructions for the AI to follow
+            return {
+                "status": "success",
+                "skill_name": skill_name,
+                "instructions": result.get("instructions", ""),
+                "source": "skill"
+            }
+        else:
+            return {
+                "status": "error",
+                "error": result.get("error", "Unknown skill error"),
+                "source": "skill"
+            }
 
     def _execute_create_migration_plan(self, task_id: int,
                                          source_connection_name: str,
@@ -2489,7 +2752,7 @@ Remember: You are the user's database assistant, helping them directly operate t
                     "error": item.error_message
                 })
 
-        return {
+        report = {
             "status": "success",
             "task_id": task_id,
             "task_name": task.name,
@@ -2509,6 +2772,11 @@ Remember: You are the user's database assistant, helping them directly operate t
             "failed_items": items_by_status["failed"],
             "skipped_items": items_by_status["skipped"]
         }
+
+        # 迁移完成，重置自动执行模式
+        self.migration_auto_execute = False
+
+        return report
 
     def _execute_skip_migration_item(self, item_id: int, reason: str = None, **kwargs) -> Dict[str, Any]:
         """Skip a migration item"""

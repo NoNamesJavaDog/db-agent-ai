@@ -72,6 +72,7 @@ from db_agent.core.database import DatabaseToolsFactory
 from db_agent.llm import LLMClientFactory
 from db_agent.i18n import i18n, t
 from db_agent.storage import SQLiteStorage, DatabaseConnection, LLMProvider, Session, ChatMessage, encrypt, decrypt
+from db_agent.skills import SkillRegistry, SkillExecutor
 from .config import ConfigManager, migrate_from_ini, find_config_ini
 
 
@@ -274,11 +275,21 @@ class AgentCLI:
         self.config_manager = config_manager  # For backward compatibility
         self.current_session_id = None  # Track current session
 
+        # Initialize Skills
+        self.skill_registry = SkillRegistry()
+        self.skill_registry.load()
+        self.skill_executor = SkillExecutor(self.skill_registry)
+
+        # Set skill registry on agent
+        self.agent.set_skill_registry(self.skill_registry)
+
         # 斜杠命令列表 (用于自动补全)
         self.slash_commands = [
             ("/help", "cmd_help"),
             ("/file", "cmd_file"),
             ("/migrate", "cmd_migrate"),
+            ("/mcp", "cmd_mcp"),
+            ("/skills", "cmd_skills"),
             ("/sessions", "cmd_sessions"),
             ("/session", "cmd_session"),
             ("/connections", "cmd_connections"),
@@ -325,8 +336,11 @@ class AgentCLI:
 
         # 设置prompt_toolkit自动补全和命令历史
         if PROMPT_TOOLKIT_AVAILABLE:
+            # Include skill names in autocomplete
+            all_commands = [cmd for cmd, _ in self.slash_commands]
+            all_commands.extend(self.skill_registry.get_user_invocable_names())
             self.command_completer = WordCompleter(
-                [cmd for cmd, _ in self.slash_commands],
+                all_commands,
                 ignore_case=True,
                 match_middle=False
             )
@@ -398,6 +412,7 @@ class AgentCLI:
         help_table.add_row("/help", t("cmd_help"))
         help_table.add_row("/file [path]", t("cmd_file"))
         help_table.add_row("/migrate", t("cmd_migrate"))
+        help_table.add_row("/mcp <list|add|remove|enable|disable|tools>", t("cmd_mcp"))
         help_table.add_row("/sessions", t("cmd_sessions"))
         help_table.add_row("/session <new|use|delete|rename>", t("cmd_session"))
         help_table.add_row("/connections", t("cmd_connections"))
@@ -571,15 +586,15 @@ class AgentCLI:
     # ==================== Connection Management ====================
 
     def show_connections(self):
-        """显示数据库连接列表"""
+        """显示数据库连接列表并提供操作菜单"""
         console.print()
         connections = self.storage.list_connections()
 
         if not connections:
             console.print(f"[dim]{t('connections_empty')}[/]")
             console.print()
-            console.print(f"[cyan]{t('input_hint', help='/connection add', model='', lang='', exit='')}[/]")
-            console.print()
+            # 无连接时直接进入添加向导
+            self.add_connection_wizard()
             return
 
         table = Table(box=box.ROUNDED, padding=(0, 2))
@@ -608,10 +623,87 @@ class AgentCLI:
             box=box.ROUNDED
         ))
 
-        # Show sub-commands
+        # 操作菜单
         console.print()
-        console.print("[dim]Commands: /connection add | /connection use <name> | /connection edit <name> | /connection delete <name> | /connection test [name][/]")
+        actions = [
+            ("use", t("conn_action_use")),
+            ("add", t("conn_action_add")),
+            ("edit", t("conn_action_edit")),
+            ("delete", t("conn_action_delete")),
+            ("test", t("conn_action_test")),
+        ]
+        for i, (key, label) in enumerate(actions, 1):
+            console.print(f"  [yellow]{i}.[/] {label}")
         console.print()
+
+        choice = Prompt.ask(
+            f"[cyan]{t('conn_select_action')}[/]",
+            default=""
+        )
+
+        if not choice:
+            return
+
+        try:
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(actions):
+                console.print(f"[red]{t('invalid_choice')}[/]")
+                return
+        except ValueError:
+            console.print(f"[red]{t('enter_valid_number')}[/]")
+            return
+
+        action_key = actions[idx][0]
+
+        if action_key == "add":
+            self.add_connection_wizard()
+        elif action_key in ("use", "edit", "delete", "test"):
+            selected = self._select_connection(connections)
+            if not selected:
+                return
+            if action_key == "use":
+                self.switch_connection(selected.name)
+            elif action_key == "edit":
+                self.edit_connection(selected.name)
+            elif action_key == "delete":
+                self.delete_connection(selected.name)
+            elif action_key == "test":
+                self.test_connection(selected.name)
+
+    def _select_connection(self, connections=None):
+        """让用户通过序号选择一个连接，返回连接对象或None"""
+        if connections is None:
+            connections = self.storage.list_connections()
+
+        if not connections:
+            console.print(f"[dim]{t('connections_empty')}[/]")
+            return None
+
+        console.print()
+        for i, conn in enumerate(connections, 1):
+            status = f" [green]({t('connection_active')})[/]" if conn.is_active else ""
+            console.print(f"  [cyan]{i}.[/] {conn.name} ({conn.db_type} - {conn.host}:{conn.port}/{conn.database}){status}")
+        console.print()
+
+        choice = Prompt.ask(
+            f"[cyan]{t('conn_select_target')}[/]",
+            default=""
+        )
+
+        if not choice:
+            console.print(f"[dim]{t('cancelled')}[/]")
+            return None
+
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(connections):
+                return connections[idx]
+            else:
+                console.print(f"[red]{t('invalid_choice')}[/]")
+                return None
+        except ValueError:
+            console.print(f"[red]{t('enter_valid_number')}[/]")
+            return None
 
     def handle_connection_command(self, args: str):
         """处理 /connection 子命令"""
@@ -629,17 +721,23 @@ class AgentCLI:
             if arg:
                 self.switch_connection(arg)
             else:
-                console.print(f"[red]{t('error')}:[/] /connection use <name>")
+                selected = self._select_connection()
+                if selected:
+                    self.switch_connection(selected.name)
         elif subcommand == "edit":
             if arg:
                 self.edit_connection(arg)
             else:
-                console.print(f"[red]{t('error')}:[/] /connection edit <name>")
+                selected = self._select_connection()
+                if selected:
+                    self.edit_connection(selected.name)
         elif subcommand == "delete":
             if arg:
                 self.delete_connection(arg)
             else:
-                console.print(f"[red]{t('error')}:[/] /connection delete <name>")
+                selected = self._select_connection()
+                if selected:
+                    self.delete_connection(selected.name)
         elif subcommand == "test":
             self.test_connection(arg)
         else:
@@ -1218,6 +1316,7 @@ class AgentCLI:
         console.print(f"[green]{SYM_CHECK()}[/] {t('session_switched', name=session.name)}")
         if msg_count > 0:
             console.print(f"[dim]{t('session_restored_messages', count=msg_count)}[/]")
+            self.show_history()
 
     def delete_session(self, identifier: str):
         """删除会话"""
@@ -1253,6 +1352,423 @@ class AgentCLI:
 
         self.storage.rename_session(current_session.id, new_name)
         console.print(f"[green]{SYM_CHECK()}[/] {t('session_renamed', name=new_name)}")
+
+    # ==================== MCP Management ====================
+
+    def handle_mcp_command(self, args: str):
+        """处理 /mcp 子命令"""
+        parts = args.strip().split(maxsplit=1)
+        if not parts:
+            self.show_mcp_servers()
+            return
+
+        subcommand = parts[0].lower()
+        arg = parts[1].strip() if len(parts) > 1 else None
+
+        if subcommand == "list":
+            self.show_mcp_servers()
+        elif subcommand == "add":
+            self.add_mcp_server_wizard()
+        elif subcommand == "remove":
+            if arg:
+                self.remove_mcp_server(arg)
+            else:
+                console.print(f"[red]{t('error')}:[/] /mcp remove <name>")
+        elif subcommand == "enable":
+            if arg:
+                self.enable_mcp_server(arg, True)
+            else:
+                console.print(f"[red]{t('error')}:[/] /mcp enable <name>")
+        elif subcommand == "disable":
+            if arg:
+                self.enable_mcp_server(arg, False)
+            else:
+                console.print(f"[red]{t('error')}:[/] /mcp disable <name>")
+        elif subcommand == "tools":
+            self.show_mcp_tools(arg)
+        else:
+            console.print(f"[red]{t('invalid_choice')}[/]")
+
+    def show_mcp_servers(self):
+        """显示 MCP Server 列表"""
+        console.print()
+        servers = self.storage.list_mcp_servers()
+
+        if not servers:
+            console.print(f"[dim]{t('mcp_servers_empty')}[/]")
+            console.print()
+            console.print(f"[dim]Commands: /mcp add | /mcp tools[/]")
+            console.print()
+            return
+
+        table = Table(box=box.ROUNDED, padding=(0, 2))
+        table.add_column("#", style="cyan", justify="center", width=3)
+        table.add_column(t("mcp_server_name"), style="white")
+        table.add_column(t("mcp_server_command"), style="dim")
+        table.add_column(t("mcp_server_status"), style="white")
+
+        for i, server in enumerate(servers, 1):
+            status = f"[green]{t('mcp_enabled')}[/]" if server.get('enabled') else f"[dim]{t('mcp_disabled')}[/]"
+            command = f"{server['command']} {' '.join(server.get('args', [])[:2])}..."
+            if len(command) > 40:
+                command = command[:40] + "..."
+            table.add_row(
+                str(i),
+                server['name'],
+                command,
+                status
+            )
+
+        console.print(Panel(
+            table,
+            title=f"[bold cyan]{t('mcp_servers_title')}[/]",
+            border_style="cyan",
+            box=box.ROUNDED
+        ))
+
+        # Show sub-commands
+        console.print()
+        console.print(f"[dim]Commands: /mcp add | /mcp remove <name> | /mcp enable <name> | /mcp disable <name> | /mcp tools[/]")
+        console.print()
+
+    def add_mcp_server_wizard(self):
+        """添加新 MCP Server 的向导"""
+        import json as _json
+        from datetime import datetime
+        from db_agent.storage.models import MCPServer
+
+        console.print()
+        console.print(f"[bold cyan]{t('mcp_add_server')}[/]")
+        console.print()
+
+        # Server name
+        name = Prompt.ask(f"[cyan]{t('mcp_server_name')}[/]")
+        if not name:
+            console.print(f"[dim]{t('cancelled')}[/]")
+            return
+
+        # Check if name exists
+        existing = self.storage.get_mcp_server(name)
+        if existing:
+            console.print(f"[red]{t('mcp_server_exists', name=name)}[/]")
+            return
+
+        # Command
+        console.print()
+        console.print(f"[dim]{t('mcp_command_hint')}[/]")
+        command = Prompt.ask(f"[cyan]{t('mcp_command')}[/]", default="npx")
+
+        # Arguments
+        console.print()
+        console.print(f"[dim]{t('mcp_args_hint')}[/]")
+        args_str = Prompt.ask(f"[cyan]{t('mcp_args')}[/]", default="")
+        args = args_str.split() if args_str else []
+
+        # Environment variables (optional)
+        console.print()
+        console.print(f"[dim]{t('mcp_env_hint')}[/]")
+        env_str = Prompt.ask(f"[cyan]{t('mcp_env')}[/]", default="")
+        env = None
+        if env_str:
+            try:
+                # Parse KEY=VALUE pairs
+                env = {}
+                for pair in env_str.split():
+                    if '=' in pair:
+                        k, v = pair.split('=', 1)
+                        env[k] = v
+            except Exception:
+                console.print(f"[yellow]{t('mcp_env_parse_error')}[/]")
+
+        # Save server config
+        now = datetime.now()
+        server = MCPServer(
+            id=None,
+            name=name,
+            command=command,
+            args=_json.dumps(args),
+            env=_json.dumps(env) if env else None,
+            enabled=True,
+            created_at=now,
+            updated_at=now
+        )
+
+        try:
+            self.storage.add_mcp_server(server)
+            console.print(f"[green]{SYM_CHECK()}[/] {t('mcp_server_added', name=name)}")
+
+            # Try to connect
+            console.print()
+            if Confirm.ask(f"[cyan]{t('mcp_connect_now')}[/]", default=True):
+                self._connect_mcp_server(name)
+
+        except Exception as e:
+            console.print(f"[red]{t('error')}:[/] {e}")
+
+        console.print()
+
+    def remove_mcp_server(self, name: str):
+        """删除 MCP Server"""
+        server = self.storage.get_mcp_server(name)
+        if not server:
+            console.print(f"[red]{t('mcp_server_not_found', name=name)}[/]")
+            return
+
+        if Confirm.ask(f"[yellow]{t('mcp_server_delete_confirm', name=name)}[/]", default=False):
+            # Disconnect if connected
+            if hasattr(self.agent, 'mcp_manager') and self.agent.mcp_manager:
+                if name in self.agent.mcp_manager:
+                    self.agent.mcp_manager.remove_server_sync(name)
+                    # Refresh system prompt to remove MCP tools descriptions
+                    self.agent.refresh_system_prompt()
+
+            self.storage.delete_mcp_server(name)
+            console.print(f"[green]{SYM_CHECK()}[/] {t('mcp_server_deleted', name=name)}")
+
+    def enable_mcp_server(self, name: str, enabled: bool):
+        """启用/禁用 MCP Server"""
+        server = self.storage.get_mcp_server(name)
+        if not server:
+            console.print(f"[red]{t('mcp_server_not_found', name=name)}[/]")
+            return
+
+        self.storage.enable_mcp_server(name, enabled)
+
+        if enabled:
+            console.print(f"[green]{SYM_CHECK()}[/] {t('mcp_server_enabled', name=name)}")
+            # Try to connect
+            self._connect_mcp_server(name)
+        else:
+            console.print(f"[green]{SYM_CHECK()}[/] {t('mcp_server_disabled', name=name)}")
+            # Disconnect if connected
+            if hasattr(self.agent, 'mcp_manager') and self.agent.mcp_manager:
+                if name in self.agent.mcp_manager:
+                    self.agent.mcp_manager.remove_server_sync(name)
+                    # Refresh system prompt to remove MCP tools descriptions
+                    self.agent.refresh_system_prompt()
+
+    def _connect_mcp_server(self, name: str):
+        """连接到 MCP Server"""
+        import json as _json
+        from db_agent.mcp import MCPServerConfig, MCPManager
+
+        server_data = None
+        for s in self.storage.list_mcp_servers():
+            if s['name'] == name:
+                server_data = s
+                break
+
+        if not server_data:
+            console.print(f"[red]{t('mcp_server_not_found', name=name)}[/]")
+            return
+
+        config = MCPServerConfig(
+            name=server_data['name'],
+            command=server_data['command'],
+            args=server_data.get('args', []),
+            env=server_data.get('env'),
+            enabled=True
+        )
+
+        # Ensure MCP manager exists
+        if not hasattr(self.agent, 'mcp_manager') or self.agent.mcp_manager is None:
+            self.agent.mcp_manager = MCPManager(self.storage)
+
+        with console.status(f"[dim]{t('mcp_connecting', name=name)}[/]", spinner="dots"):
+            try:
+                success = self.agent.mcp_manager.add_server_sync(config)
+                if success:
+                    tools = self.agent.mcp_manager.get_server_tools(name)
+                    # Refresh system prompt to include new MCP tools descriptions
+                    self.agent.refresh_system_prompt()
+                    console.print(f"[green]{SYM_CHECK()}[/] {t('mcp_connected', name=name, tools=len(tools))}")
+                else:
+                    console.print(f"[red]{SYM_CROSS()}[/] {t('mcp_connect_failed', name=name)}")
+            except Exception as e:
+                console.print(f"[red]{SYM_CROSS()}[/] {t('mcp_connect_failed', name=name)}: {e}")
+
+    def show_mcp_tools(self, server_name: str = None):
+        """显示 MCP 工具列表"""
+        console.print()
+
+        if not hasattr(self.agent, 'mcp_manager') or not self.agent.mcp_manager:
+            console.print(f"[dim]{t('mcp_no_connected_servers')}[/]")
+            console.print()
+            return
+
+        if server_name:
+            # Show tools from specific server
+            tools = self.agent.mcp_manager.get_server_tools(server_name)
+            if not tools:
+                console.print(f"[dim]{t('mcp_no_tools', server=server_name)}[/]")
+                return
+
+            self._display_tools_table(tools, server_name)
+        else:
+            # Show all tools from all servers
+            all_tools = self.agent.mcp_manager.get_all_tools()
+            if not all_tools:
+                console.print(f"[dim]{t('mcp_no_tools_available')}[/]")
+                console.print()
+                return
+
+            self._display_tools_table(all_tools, None)
+
+    def _display_tools_table(self, tools: list, server_name: str = None):
+        """显示工具表格"""
+        table = Table(box=box.ROUNDED, padding=(0, 2))
+        table.add_column("#", style="cyan", justify="center", width=3)
+        table.add_column(t("mcp_tool_name"), style="green")
+        table.add_column(t("mcp_tool_description"), style="white")
+
+        for i, tool in enumerate(tools, 1):
+            func = tool.get('function', {})
+            name = func.get('name', 'unknown')
+            desc = func.get('description', '')
+            if len(desc) > 60:
+                desc = desc[:60] + "..."
+            table.add_row(str(i), name, desc)
+
+        title = f"{t('mcp_tools_title')}"
+        if server_name:
+            title += f" ({server_name})"
+
+        console.print(Panel(
+            table,
+            title=f"[bold cyan]{title}[/]",
+            border_style="cyan",
+            box=box.ROUNDED
+        ))
+        console.print()
+
+    # ==================== Skills Management ====================
+
+    def handle_skills_command(self, args: str):
+        """处理 /skills 子命令"""
+        parts = args.strip().split(maxsplit=1)
+        if not parts:
+            self.show_skills()
+            return
+
+        subcommand = parts[0].lower()
+
+        if subcommand == "list":
+            self.show_skills()
+        elif subcommand == "reload":
+            self.reload_skills()
+        else:
+            console.print(f"[red]{t('invalid_choice')}[/]")
+
+    def show_skills(self):
+        """显示 Skills 列表"""
+        console.print()
+        skills = self.skill_registry.list_all()
+
+        if not skills:
+            console.print(f"[dim]{t('skills_empty')}[/]")
+            console.print()
+            console.print(f"[dim]{t('skill_list_hint')}[/]")
+            console.print()
+            return
+
+        table = Table(box=box.ROUNDED, padding=(0, 2))
+        table.add_column("#", style="cyan", justify="center", width=3)
+        table.add_column(t("skill_name"), style="green")
+        table.add_column(t("skill_description"), style="white")
+        table.add_column(t("skill_source"), style="dim")
+
+        for i, skill in enumerate(skills, 1):
+            source = t("skill_source_personal") if skill.source == "personal" else t("skill_source_project")
+            desc = skill.description or ""
+            if len(desc) > 50:
+                desc = desc[:50] + "..."
+            table.add_row(
+                str(i),
+                f"/{skill.name}",
+                desc,
+                source
+            )
+
+        console.print(Panel(
+            table,
+            title=f"[bold cyan]{t('skills_title')}[/]",
+            border_style="cyan",
+            box=box.ROUNDED
+        ))
+
+        console.print()
+        console.print(f"[dim]{t('skill_list_hint')}[/]")
+        console.print()
+
+    def reload_skills(self):
+        """重新加载 Skills"""
+        self.skill_registry.reload()
+        count = self.skill_registry.count
+
+        # Update autocomplete
+        if PROMPT_TOOLKIT_AVAILABLE:
+            all_commands = [cmd for cmd, _ in self.slash_commands]
+            all_commands.extend(self.skill_registry.get_user_invocable_names())
+            self.command_completer = WordCompleter(
+                all_commands,
+                ignore_case=True,
+                match_middle=False
+            )
+
+        # Refresh system prompt to include updated skills descriptions
+        self.agent.refresh_system_prompt()
+
+        console.print(f"[green]{SYM_CHECK()}[/] {t('skills_reloaded')} ({t('skills_loaded', count=count)})")
+
+    def execute_skill(self, skill_name: str, arguments: str = ""):
+        """
+        执行一个 skill
+
+        Args:
+            skill_name: Skill 名称 (不含 / 前缀)
+            arguments: 传递给 skill 的参数
+        """
+        skill = self.skill_registry.get(skill_name)
+        if not skill:
+            console.print(f"[red]{t('skill_not_found', name=skill_name)}[/]")
+            return
+
+        # Execute the skill
+        context = {
+            "session_id": str(self.current_session_id) if self.current_session_id else "",
+        }
+        result = self.skill_executor.execute(skill_name, arguments, context)
+
+        if result.get("status") == "error":
+            console.print(f"[red]{t('skill_execute_failed', name=skill_name, error=result.get('error', 'Unknown error'))}[/]")
+            return
+
+        # Get the processed instructions and send to agent
+        instructions = result.get("instructions", "")
+        if instructions:
+            console.print()
+            console.print(f"[dim]{t('skill_executed', name=skill_name)}[/]")
+            console.print()
+
+            # Send instructions to agent as user message
+            def on_thinking(event_type, data):
+                if event_type == "tool_call":
+                    self.show_tool_call(data["name"], data["input"])
+                elif event_type == "tool_result":
+                    self.show_tool_result(data["name"], data["result"])
+
+            console.print(f"[dim]{t('thinking')}[/]")
+            response = self.agent.chat(instructions, on_thinking=on_thinking)
+
+            console.print()
+
+            if response:
+                console.print(Panel(
+                    Markdown(response),
+                    border_style="magenta",
+                    box=box.ROUNDED,
+                    padding=(1, 2)
+                ))
 
     def reset_conversation(self):
         """重置对话"""
@@ -1674,10 +2190,24 @@ class AgentCLI:
             default=""
         )
 
+        # 选择SQL执行确认模式
+        console.print()
+        console.print(f"[cyan]{t('migrate_confirm_mode')}:[/]")
+        console.print(f"  [green]1.[/] {t('migrate_confirm_mode_auto')}")
+        console.print(f"  [yellow]2.[/] {t('migrate_confirm_mode_manual')}")
+        console.print()
+        mode_choice = Prompt.ask(
+            f"[cyan]{t('migrate_enter_number')}[/]",
+            choices=["1", "2"],
+            default="1"
+        )
+        auto_execute = (mode_choice == "1")
+
         # 创建迁移任务
         from datetime import datetime
         task_name = f"Migration_{source_conn.name}_to_{active_conn.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+        import json as _json
         from db_agent.storage.models import MigrationTask
         task = MigrationTask(
             id=None,
@@ -1693,7 +2223,7 @@ class AgentCLI:
             skipped_items=0,
             source_schema=source_schema or None,
             target_schema=None,
-            options=None,
+            options=_json.dumps({"auto_execute": auto_execute}),
             analysis_result=None,
             error_message=None,
             started_at=None,
@@ -1703,6 +2233,10 @@ class AgentCLI:
         )
 
         task_id = self.storage.create_migration_task(task)
+
+        # 设置Agent的迁移自动执行标志
+        if auto_execute:
+            self.agent.migration_auto_execute = True
 
         console.print()
         console.print(f"[green]{SYM_CHECK()}[/] {t('migrate_task_created', task_id=task_id, name=task_name)}")
@@ -1926,6 +2460,31 @@ class AgentCLI:
                     args = parts[1].strip() if len(parts) > 1 else ""
                     self.handle_session_command(args)
                     continue
+
+                # 处理 /mcp 命令 (带子命令)
+                if user_input.lower().startswith('/mcp'):
+                    parts = user_input.split(maxsplit=1)
+                    args = parts[1].strip() if len(parts) > 1 else ""
+                    self.handle_mcp_command(args)
+                    continue
+
+                # 处理 /skills 命令 (带子命令)
+                if user_input.lower().startswith('/skills'):
+                    parts = user_input.split(maxsplit=1)
+                    args = parts[1].strip() if len(parts) > 1 else ""
+                    self.handle_skills_command(args)
+                    continue
+
+                # 处理 /<skill-name> 命令 - 调用外部 skill
+                if user_input.startswith('/') and len(user_input) > 1:
+                    # Check if this is a skill invocation
+                    parts = user_input[1:].split(maxsplit=1)  # Remove leading /
+                    potential_skill_name = parts[0]
+                    skill_args = parts[1] if len(parts) > 1 else ""
+
+                    if self.skill_registry.has_skill(potential_skill_name):
+                        self.execute_skill(potential_skill_name, skill_args)
+                        continue
 
                 # 如果有加载的文件，将文件内容作为上下文添加到消息中
                 if self._loaded_file_content and not user_input.startswith('/'):

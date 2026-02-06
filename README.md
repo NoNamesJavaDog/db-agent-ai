@@ -22,6 +22,8 @@
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
 - [Use Cases](#-use-cases)
+- [MCP Integration](#-mcp-integration)
+- [Skills System](#-skills-system)
 - [Configuration](#-configuration)
 - [API Service](#-api-service)
 - [FAQ](#-faq)
@@ -55,6 +57,8 @@
 - **Real-time Feedback** - Transparent tool execution with instant results
 - **Session Management** - Persistent conversation history with SQLite storage
 - **Multi-Connection** - Manage multiple database connections, switch on the fly
+- **MCP Integration** - Extend capabilities with Model Context Protocol servers
+- **Skills System** - Claude Code compatible skills for extensible workflows
 
 ---
 
@@ -140,44 +144,44 @@ Agent: Executing migration...
 ## Architecture
 
 ```
-+-------------------------------------------------------------+
-|                        DB Agent                              |
-+-------------------------------------------------------------+
-|  +-----------+  +-----------+  +-----------+                |
-|  |    CLI    |  |    API    |  |    Web    |                |
-|  +-----+-----+  +-----+-----+  +-----+-----+                |
-|        |              |              |                       |
-|        +-------+------+------+-------+                       |
-|                |                                             |
-|  +-----------------------------------------------+          |
-|  |              SQLTuningAgent                    |          |
-|  |  +-----------+  +----------+  +------------+  |          |
-|  |  | Dialogue  |  |   Tool   |  |  Security  |  |          |
-|  |  | Manager   |  | Executor |  | Confirmer  |  |          |
-|  |  +-----------+  +----------+  +------------+  |          |
-|  +-----------------------------------------------+          |
-|                |                                             |
-|        +-------+-------+-------+-------+                     |
-|        v               v       v       v                     |
-|  +-----------+  +-----------+  +-----+ +------------+       |
-|  |    LLM    |  | Database  |  |i18n | |  Storage   |       |
-|  |  Clients  |  |   Tools   |  +-----+ | ---------- |       |
-|  | --------- |  | --------- |          | SQLite DB  |       |
-|  | DeepSeek  |  | Query     |          | - Sessions |       |
-|  | OpenAI    |  | Schema    |          | - Messages |       |
-|  | Claude    |  | Index     |          | - Configs  |       |
-|  | Gemini    |  | Migration |          | - Tasks    |       |
-|  | Qwen      |  +-----------+          +------------+       |
-|  | Ollama    |        |                                     |
-|  +-----------+        v                                     |
-|                +-------------+                              |
-|                | PostgreSQL  |                              |
-|                |    MySQL    |                              |
-|                |   Oracle    |                              |
-|                | SQL Server  |                              |
-|                |   GaussDB   |                              |
-|                +-------------+                              |
-+-------------------------------------------------------------+
++-----------------------------------------------------------------------+
+|                            DB Agent                                    |
++-----------------------------------------------------------------------+
+|  +-----------+  +-----------+  +-----------+                          |
+|  |    CLI    |  |    API    |  |    Web    |                          |
+|  +-----+-----+  +-----+-----+  +-----+-----+                          |
+|        |              |              |                                 |
+|        +-------+------+------+-------+                                 |
+|                |                                                       |
+|  +-----------------------------------------------------------+        |
+|  |                    SQLTuningAgent                          |        |
+|  |  +-----------+  +----------+  +------------+  +--------+  |        |
+|  |  | Dialogue  |  |   Tool   |  |  Security  |  | Skills |  |        |
+|  |  | Manager   |  | Executor |  | Confirmer  |  | Engine |  |        |
+|  |  +-----------+  +----------+  +------------+  +--------+  |        |
+|  +-----------------------------------------------------------+        |
+|                |                                                       |
+|    +-----------+-----------+-----------+-----------+-----------+      |
+|    v           v           v           v           v           v      |
+|  +-------+ +--------+ +---------+ +-------+ +----------+ +--------+   |
+|  |  LLM  | |Database| |   MCP   | | i18n  | | Storage  | | Skills |   |
+|  |Clients| | Tools  | | Manager | +-------+ |----------| |Registry|   |
+|  |-------| |--------| |---------|           | SQLite   | |--------|   |
+|  |DeepSk | | Query  | |Servers: |           |- Sessions| |Personal|   |
+|  |OpenAI | | Schema | |- fs     |           |- Messages| |Project |   |
+|  |Claude | | Index  | |- fetch  |           |- Configs | |        |   |
+|  |Gemini | |Migrate | |- custom |           |- Tasks   | |        |   |
+|  |Qwen   | +--------+ +---------+           +----------+ +--------+   |
+|  |Ollama |      |                                                     |
+|  +-------+      v                                                     |
+|           +-------------+                                             |
+|           | PostgreSQL  |                                             |
+|           |    MySQL    |                                             |
+|           |   Oracle    |                                             |
+|           | SQL Server  |                                             |
+|           |   GaussDB   |                                             |
+|           +-------------+                                             |
++-----------------------------------------------------------------------+
 ```
 
 ### Project Structure
@@ -203,6 +207,16 @@ ai_agent/
 │   │   ├── claude.py              # Anthropic Claude
 │   │   ├── gemini.py              # Google Gemini
 │   │   └── factory.py             # Client factory
+│   ├── mcp/                       # MCP (Model Context Protocol)
+│   │   ├── __init__.py            # Package exports
+│   │   └── manager.py             # MCP server management
+│   ├── skills/                    # Skills system (Claude Code compatible)
+│   │   ├── __init__.py            # Package exports
+│   │   ├── models.py              # Skill data models
+│   │   ├── parser.py              # SKILL.md parser
+│   │   ├── loader.py              # Skills loader
+│   │   ├── registry.py            # Skills registry
+│   │   └── executor.py            # Skills executor
 │   ├── storage/                   # Data persistence (SQLite)
 │   │   ├── __init__.py            # Package exports
 │   │   ├── models.py              # Data models (Session, Message, Connection, etc.)
@@ -215,6 +229,10 @@ ai_agent/
 │   │   └── config.py              # Configuration manager
 │   └── i18n/                      # Internationalization
 │       └── translations.py        # Translation files
+├── .claude/                       # Project-level skills
+│   └── skills/                    # Skills directory
+│       └── <skill-name>/          # Each skill in its own folder
+│           └── SKILL.md           # Skill definition file
 ├── scripts/                       # Startup scripts
 │   ├── start.sh                   # Linux/macOS
 │   └── start.bat                  # Windows
@@ -420,6 +438,13 @@ De> list all tables
 | `/help` | Show help information |
 | `/file [path]` | Load SQL file for analysis |
 | `/migrate` | Database migration wizard (file import or online migration) |
+| `/mcp` | Manage MCP external tool servers |
+| `/mcp add` | Add a new MCP server |
+| `/mcp list` | List all MCP servers |
+| `/mcp tools` | Show available MCP tools |
+| `/skills` | List all available skills |
+| `/skills reload` | Reload skills from filesystem |
+| `/<skill-name>` | Invoke a skill (e.g., `/db-agent`) |
 | `/sessions` | List all sessions |
 | `/session new` | Create a new session |
 | `/session use <id/name>` | Switch to a session |
@@ -832,6 +857,263 @@ DB Agent has built-in detailed conversion rules for Oracle to GaussDB migration:
 | | '.' (regex) | Matches newline | Oracle doesn't match newline by default |
 | | LOWER/UPPER(date) | Format differs | Use TO_CHAR first |
 
+```
+
+---
+
+## MCP Integration
+
+DB Agent supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to extend its capabilities with external tools and services.
+
+### What is MCP?
+
+MCP is an open protocol that enables AI assistants to connect to external data sources and tools. With MCP integration, DB Agent can:
+
+- Access file systems
+- Fetch web content
+- Query external APIs
+- Use custom tools
+
+### Managing MCP Servers
+
+```
+# List all MCP servers
+De> /mcp list
+
++--------------------------------------------------+
+| MCP Servers                                       |
+|--------------------------------------------------|
+| # | Name        | Command             | Status   |
+|---|-------------|---------------------|----------|
+| 1 | filesystem  | npx @modelcontex... | Enabled  |
+| 2 | fetch       | npx @modelcontex... | Disabled |
++--------------------------------------------------+
+
+# Add a new MCP server
+De> /mcp add
+
+Server Name: filesystem
+Command: npx
+Arguments: -y @modelcontextprotocol/server-filesystem /tmp
+Environment Variables: (optional)
+
+✓ MCP Server [filesystem] added successfully
+Connect now? [y/n]: y
+Connecting to MCP Server [filesystem]...
+✓ Connected to MCP Server [filesystem] (3 tools)
+
+# View available tools
+De> /mcp tools
+
++--------------------------------------------------+
+| MCP Tools                                         |
+|--------------------------------------------------|
+| # | Tool Name      | Description                 |
+|---|----------------|------------------------------|
+| 1 | read_file      | Read a file from disk       |
+| 2 | write_file     | Write content to a file     |
+| 3 | list_directory | List directory contents     |
++--------------------------------------------------+
+
+# Enable/disable servers
+De> /mcp enable filesystem
+De> /mcp disable fetch
+
+# Remove a server
+De> /mcp remove fetch
+```
+
+### Available MCP Servers
+
+Here are some useful MCP servers you can add:
+
+| Server | Command | Description |
+|--------|---------|-------------|
+| Filesystem | `npx -y @modelcontextprotocol/server-filesystem /path` | Read/write files |
+| Fetch | `npx -y @modelcontextprotocol/server-fetch` | Fetch web content |
+| GitHub | `npx -y @modelcontextprotocol/server-github` | GitHub API access |
+| PostgreSQL | `npx -y @modelcontextprotocol/server-postgres` | Direct PostgreSQL access |
+
+### Using MCP Tools
+
+Once MCP servers are connected, the AI can automatically use these tools:
+
+```
+De> Read the file /tmp/config.json and summarize its contents
+
+Agent: I'll use the filesystem tool to read that file...
+       [Uses MCP tool: read_file]
+
+       The config.json contains the following settings:
+       - Database: PostgreSQL on localhost:5432
+       - API endpoints: 3 configured
+       - Logging level: INFO
+```
+
+---
+
+## Skills System
+
+DB Agent includes a Claude Code compatible Skills system that allows you to extend its capabilities with custom workflows.
+
+### What are Skills?
+
+Skills are reusable instruction sets that can be:
+- **User-invoked** via `/skill-name` commands
+- **AI-invoked** automatically when relevant
+- **Loaded from files** in standardized locations
+
+### Skill Locations
+
+Skills are loaded from two locations (in priority order):
+
+| Location | Priority | Description |
+|----------|----------|-------------|
+| `~/.claude/skills/<name>/SKILL.md` | High | Personal skills (user-specific) |
+| `.claude/skills/<name>/SKILL.md` | Low | Project skills (repo-specific) |
+
+Personal skills override project skills with the same name.
+
+### Creating a Skill
+
+Create a `SKILL.md` file with YAML frontmatter:
+
+```markdown
+---
+name: my-skill
+description: A helpful skill for doing X
+user-invocable: true
+disable-model-invocation: false
+allowed-tools: Bash, Read
+---
+
+# My Skill Instructions
+
+This skill helps with X. Here's what to do:
+
+1. First, check the current state
+2. Then, perform the operation
+3. Finally, verify the result
+
+Arguments provided: $ARGUMENTS
+First argument: $1
+Second argument: $2
+```
+
+### Skill Configuration Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | folder name | Skill identifier |
+| `description` | string | "" | Description for AI tool listing |
+| `user-invocable` | boolean | true | Can be called via `/skill-name` |
+| `disable-model-invocation` | boolean | false | Prevent AI auto-invocation |
+| `allowed-tools` | string/list | [] | Tools the skill can use |
+| `context` | string | "main" | Execution context |
+
+### Variable Substitution
+
+Skills support these variables:
+
+| Variable | Description |
+|----------|-------------|
+| `$ARGUMENTS` | All arguments as a string |
+| `$ARGUMENTS[N]` | Nth argument (0-indexed) |
+| `$N` | Nth argument (1-indexed) |
+| `${VAR_NAME}` | Environment variable |
+| `${CLAUDE_SESSION_ID}` | Current session ID |
+| `!`command`` | Execute command and insert output |
+
+### Managing Skills
+
+```
+# List all available skills
+De> /skills
+
++--------------------------------------------------+
+| Skills                                            |
+|--------------------------------------------------|
+| # | Name      | Description              | Source  |
+|---|-----------|--------------------------|---------|
+| 1 | /db-agent | Database AI agent for... | Personal|
+| 2 | /analyze  | Analyze SQL performance  | Project |
++--------------------------------------------------+
+
+Use /<skill-name> to invoke a skill, or /skills reload to reload
+
+# Reload skills after adding/editing
+De> /skills reload
+✓ Skills reloaded (Loaded 2 skills)
+
+# Invoke a skill
+De> /db-agent analyze slow queries
+
+Executed skill [db-agent]
+Thinking...
+```
+
+### Example: Database Analysis Skill
+
+Create `~/.claude/skills/analyze-db/SKILL.md`:
+
+```markdown
+---
+name: analyze-db
+description: Comprehensive database health analysis
+user-invocable: true
+---
+
+# Database Health Analysis
+
+Perform a comprehensive analysis of the current database:
+
+1. List all tables and their sizes
+2. Check for unused indexes
+3. Identify tables needing VACUUM
+4. Find slow queries
+5. Generate optimization recommendations
+
+Focus area: $ARGUMENTS
+```
+
+Then use it:
+
+```
+De> /analyze-db index optimization
+
+Agent: I'll perform a comprehensive database analysis focusing on index optimization...
+       [Executes analysis steps]
+```
+
+### db-agent as a Claude Code Skill
+
+DB Agent can be used as a skill from Claude Code. A default skill is created at `~/.claude/skills/db-agent/SKILL.md`:
+
+```markdown
+---
+name: db-agent
+description: Database AI agent for SQL tuning, migrations, and operations
+user-invocable: true
+allowed-tools: Bash
+---
+
+# DB-Agent Database Assistant
+
+Execute database operations using db-agent CLI.
+
+## Quick Start
+\`\`\`bash
+db-agent
+\`\`\`
+
+## Capabilities
+- SQL query execution and optimization
+- Query execution plan analysis
+- Slow query identification
+- Index recommendations
+- Cross-database migrations
+
+Arguments: $ARGUMENTS
 ```
 
 ---
@@ -1286,6 +1568,28 @@ The Agent can automatically invoke these database tools:
 | `compare_databases` | Compare source and target databases | Migration verification |
 | `generate_migration_report` | Generate migration report | Migration documentation |
 | `get_migration_status` | Get migration progress | Progress tracking |
+
+### MCP Tools
+
+When MCP servers are connected, additional tools become available:
+
+| Tool | Server | Description |
+|------|--------|-------------|
+| `read_file` | filesystem | Read a file from disk |
+| `write_file` | filesystem | Write content to a file |
+| `list_directory` | filesystem | List directory contents |
+| `fetch` | fetch | Fetch content from URLs |
+| *(varies)* | *(custom)* | Custom MCP server tools |
+
+### Skill Tools
+
+Skills that allow model invocation appear as tools:
+
+| Tool | Description |
+|------|-------------|
+| `skill_<name>` | Execute the named skill with arguments |
+
+Example: `skill_db-agent` - Invoke the db-agent skill
 
 ---
 

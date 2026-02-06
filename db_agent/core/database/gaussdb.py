@@ -32,15 +32,37 @@ class GaussDBTools(BaseDatabaseTools):
     def db_type(self) -> str:
         return "gaussdb"
 
-    def get_connection(self):
-        """Get database connection using pg8000 (supports sha256 auth)"""
-        return pg8000.connect(
-            host=self.db_config.get("host", "localhost"),
-            port=int(self.db_config.get("port", 5432)),
-            database=self.db_config.get("database"),
-            user=self.db_config.get("user"),
-            password=self.db_config.get("password")
-        )
+    def get_connection(self, retries: int = 3):
+        """Get database connection using pg8000 (supports sha256 auth)
+
+        Args:
+            retries: Number of retry attempts for transient failures
+        """
+        import time
+        last_error = None
+        for attempt in range(retries):
+            try:
+                return pg8000.connect(
+                    host=self.db_config.get("host", "localhost"),
+                    port=int(self.db_config.get("port", 5432)),
+                    database=self.db_config.get("database"),
+                    user=self.db_config.get("user"),
+                    password=self.db_config.get("password")
+                )
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                # Retry on transient connection errors
+                if attempt < retries - 1 and (
+                    "connection" in error_msg or
+                    "timeout" in error_msg or
+                    "refused" in error_msg
+                ):
+                    logger.warning(f"Connection attempt {attempt + 1} failed: {e}, retrying...")
+                    time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                else:
+                    raise
+        raise last_error
 
     def _init_db_info(self):
         """Initialize database information, detect Centralized/Distributed mode"""
@@ -588,13 +610,23 @@ class GaussDBTools(BaseDatabaseTools):
                 "message": t("db_need_confirm")
             }
 
+        # Check if SQL requires autocommit (cannot run inside transaction block)
+        needs_autocommit = (
+            sql_upper.startswith("CREATE DATABASE") or
+            sql_upper.startswith("DROP DATABASE") or
+            sql_upper.startswith("VACUUM")
+        )
+
         # Confirmed, execute operation
         conn = self.get_connection()
+        if needs_autocommit:
+            conn.autocommit = True
         try:
             cur = conn.cursor()
             cur.execute(sql)
             rowcount = cur.rowcount
-            conn.commit()
+            if not needs_autocommit:
+                conn.commit()
             return {
                 "status": "success",
                 "type": "execute",
@@ -603,7 +635,8 @@ class GaussDBTools(BaseDatabaseTools):
             }
 
         except Exception as e:
-            conn.rollback()
+            if not needs_autocommit:
+                conn.rollback()
             logger.error(f"SQL execution failed: {e}")
             return {
                 "status": "error",

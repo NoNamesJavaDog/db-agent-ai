@@ -211,3 +211,70 @@ class MigrationItem:
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+
+
+@dataclass
+class MCPServer:
+    """MCP Server configuration"""
+    id: Optional[int]
+    name: str                          # Server name (unique identifier)
+    command: str                       # Command to start server (npx, python, node, etc.)
+    args: str                          # JSON serialized argument list
+    env: Optional[str]                 # JSON serialized environment variables
+    enabled: bool                      # Whether this server is enabled
+    created_at: datetime
+    updated_at: datetime
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for display"""
+        import json
+        return {
+            'id': self.id,
+            'name': self.name,
+            'command': self.command,
+            'args': json.loads(self.args) if self.args else [],
+            'env': json.loads(self.env) if self.env else None,
+            'enabled': self.enabled,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+
+@dataclass
+class AuditLog:
+    """Audit log record for tracking database operations and changes"""
+    id: Optional[int]
+    session_id: Optional[int]          # Associated session ID
+    connection_id: Optional[int]       # Associated database connection ID
+    category: str                      # sql_execute / tool_call / config_change
+    action: str                        # Specific action (execute_sql, list_tables, add_connection, etc.)
+    target_type: Optional[str]         # Target object type (table, index, connection, provider, etc.)
+    target_name: Optional[str]         # Target object name
+    sql_text: Optional[str]            # SQL statement (if applicable)
+    parameters: Optional[str]          # JSON: operation parameters
+    result_status: str                 # success / error / pending
+    result_summary: Optional[str]      # Result summary (affected_rows, error_message, etc.)
+    affected_rows: Optional[int]       # Number of affected rows
+    execution_time_ms: Optional[int]   # Execution time in milliseconds
+    user_confirmed: bool               # Whether user confirmed the operation
+    created_at: datetime
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for display"""
+        return {
+            'id': self.id,
+            'session_id': self.session_id,
+            'connection_id': self.connection_id,
+            'category': self.category,
+            'action': self.action,
+            'target_type': self.target_type,
+            'target_name': self.target_name,
+            'sql_text': self.sql_text,
+            'parameters': self.parameters,
+            'result_status': self.result_status,
+            'result_summary': self.result_summary,
+            'affected_rows': self.affected_rows,
+            'execution_time_ms': self.execution_time_ms,
+            'user_confirmed': self.user_confirmed,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
