@@ -950,6 +950,102 @@ Agent: I'll use the filesystem tool to read that file...
        - Logging level: INFO
 ```
 
+### Use DB Agent as MCP Server (Claude Desktop)
+
+DB Agent can be exposed as an MCP server, allowing Claude Desktop to directly use its database tools.
+
+**Available Tools in Claude Desktop:**
+
+| Tool | Description |
+|------|-------------|
+| `list_tables` | List all tables |
+| `describe_table` | View table structure |
+| `get_sample_data` | Get sample data |
+| `execute_query` | Execute SELECT queries (read-only) |
+| `run_explain` | Analyze execution plans |
+| `identify_slow_queries` | Identify slow queries |
+| `get_table_stats` | Table statistics |
+| `check_index_usage` | Index usage information |
+| `get_running_queries` | Currently running queries |
+| `get_db_info` | Database connection info |
+
+**Setup Steps:**
+
+1. Install MCP SDK:
+```bash
+pip install mcp[cli]
+```
+
+2. Edit Claude Desktop config file:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+**Option A: Direct connection parameters**
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "/path/to/your/venv/bin/python",
+      "args": [
+        "-m", "db_agent.mcp.server",
+        "--db-type", "postgresql",
+        "--host", "localhost",
+        "--port", "5432",
+        "--database", "mydb",
+        "--user", "postgres"
+      ],
+      "env": {
+        "DB_PASSWORD": "your_password",
+        "PYTHONPATH": "/path/to/db-agent-ai"
+      }
+    }
+  }
+}
+```
+
+**Option B: Use a JSON config file**
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "/path/to/your/venv/bin/python",
+      "args": ["-m", "db_agent.mcp.server", "--db-config", "/path/to/db_config.json"]
+    }
+  }
+}
+```
+
+Where `db_config.json`:
+```json
+{
+  "db_type": "postgresql",
+  "host": "localhost",
+  "port": 5432,
+  "database": "mydb",
+  "user": "postgres",
+  "password": "your_password"
+}
+```
+
+**Option C: Use a stored connection from db-agent**
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "/path/to/your/venv/bin/python",
+      "args": ["-m", "db_agent.mcp.server", "--use-active"]
+    }
+  }
+}
+```
+
+Or specify a connection name: `"args": ["-m", "db_agent.mcp.server", "--connection", "my_pg_conn"]`
+
+3. Restart Claude Desktop. The db-agent MCP server will start automatically.
+
+**Supported database types:** `postgresql`, `mysql`, `gaussdb`, `oracle`, `sqlserver`
+
 ---
 
 ## Skills System

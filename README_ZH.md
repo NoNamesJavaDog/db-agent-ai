@@ -948,6 +948,102 @@ Agent: 我来使用文件系统工具读取该文件...
        - 日志级别: INFO
 ```
 
+### 将 DB Agent 作为 MCP 服务器（Claude Desktop）
+
+DB Agent 可以作为 MCP 服务器暴露给 Claude Desktop，让 Claude Desktop 直接使用其数据库工具。
+
+**Claude Desktop 中可用的工具：**
+
+| 工具 | 描述 |
+|------|------|
+| `list_tables` | 列出所有表 |
+| `describe_table` | 查看表结构 |
+| `get_sample_data` | 获取样本数据 |
+| `execute_query` | 执行 SELECT 查询（只读） |
+| `run_explain` | 分析执行计划 |
+| `identify_slow_queries` | 识别慢查询 |
+| `get_table_stats` | 表统计信息 |
+| `check_index_usage` | 索引使用情况 |
+| `get_running_queries` | 当前运行的查询 |
+| `get_db_info` | 数据库连接信息 |
+
+**配置步骤：**
+
+1. 安装 MCP SDK：
+```bash
+pip install mcp[cli]
+```
+
+2. 编辑 Claude Desktop 配置文件：
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+**方式 A：直接指定数据库连接参数**
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "/path/to/your/venv/bin/python",
+      "args": [
+        "-m", "db_agent.mcp.server",
+        "--db-type", "postgresql",
+        "--host", "localhost",
+        "--port", "5432",
+        "--database", "mydb",
+        "--user", "postgres"
+      ],
+      "env": {
+        "DB_PASSWORD": "your_password",
+        "PYTHONPATH": "/path/to/db-agent-ai"
+      }
+    }
+  }
+}
+```
+
+**方式 B：使用 JSON 配置文件**
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "/path/to/your/venv/bin/python",
+      "args": ["-m", "db_agent.mcp.server", "--db-config", "/path/to/db_config.json"]
+    }
+  }
+}
+```
+
+其中 `db_config.json`：
+```json
+{
+  "db_type": "postgresql",
+  "host": "localhost",
+  "port": 5432,
+  "database": "mydb",
+  "user": "postgres",
+  "password": "your_password"
+}
+```
+
+**方式 C：使用 db-agent 已存储的连接**
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "/path/to/your/venv/bin/python",
+      "args": ["-m", "db_agent.mcp.server", "--use-active"]
+    }
+  }
+}
+```
+
+或指定连接名：`"args": ["-m", "db_agent.mcp.server", "--connection", "my_pg_conn"]`
+
+3. 重启 Claude Desktop，db-agent MCP 服务器会自动启动。
+
+**支持的数据库类型：** `postgresql`、`mysql`、`gaussdb`、`oracle`、`sqlserver`
+
 ---
 
 ## 📦 Skills 技能系统
