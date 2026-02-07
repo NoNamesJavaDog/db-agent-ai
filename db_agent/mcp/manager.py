@@ -49,13 +49,13 @@ class MCPManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create event loop."""
+        """Get or create a private event loop.
+
+        Uses a dedicated event loop to avoid conflicts when called from
+        an already-running loop context.
+        """
         if self._loop is None or self._loop.is_closed():
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
+            self._loop = asyncio.new_event_loop()
         return self._loop
 
     async def load_servers(self) -> None:
@@ -258,6 +258,28 @@ class MCPManager:
         """Synchronous wrapper for close_all."""
         loop = self._get_loop()
         loop.run_until_complete(self.close_all())
+
+    async def health_check_all(self) -> Dict[str, bool]:
+        """
+        Run health checks on all connected MCP servers.
+
+        Returns:
+            Dictionary mapping server_name -> healthy (True/False)
+        """
+        results: Dict[str, bool] = {}
+        for name, client in self.clients.items():
+            try:
+                healthy = await client.health_check()
+                results[name] = healthy
+            except Exception as e:
+                logger.warning(f"Health check error for server {name}: {e}")
+                results[name] = False
+        return results
+
+    def health_check_all_sync(self) -> Dict[str, bool]:
+        """Synchronous wrapper for health_check_all."""
+        loop = self._get_loop()
+        return loop.run_until_complete(self.health_check_all())
 
     def list_connected_servers(self) -> List[str]:
         """

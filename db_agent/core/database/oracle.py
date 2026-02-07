@@ -309,6 +309,10 @@ class OracleTools(BaseDatabaseTools):
                 "error": t("db_only_select")
             }
 
+        func_check = self._check_function_call_in_select(sql_upper)
+        if func_check:
+            return func_check
+
         conn = self.get_connection()
         try:
             cur = conn.cursor()
@@ -912,6 +916,52 @@ class OracleTools(BaseDatabaseTools):
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            conn.close()
+
+    def list_databases(self) -> Dict[str, Any]:
+        """List all pluggable databases (PDBs) or return current service name for Oracle"""
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            databases = []
+
+            # Try to list PDBs (Oracle 12c+ with CDB architecture)
+            try:
+                cur.execute("""
+                    SELECT name,
+                           open_mode,
+                           ROUND(total_size / 1024 / 1024, 2) AS size_mb
+                    FROM v$pdbs
+                    ORDER BY name
+                """)
+                columns = [desc[0].lower() for desc in cur.description]
+                for row in cur.fetchall():
+                    db = dict(zip(columns, row))
+                    db["size"] = f"{db.pop('size_mb', 0)} MB"
+                    databases.append(db)
+            except Exception:
+                pass
+
+            current_db = self.db_config.get("database", "")
+
+            # If no PDBs found, return current service name
+            if not databases:
+                databases = [{"name": current_db, "is_current": True}]
+            else:
+                for db in databases:
+                    db["is_current"] = (db["name"].upper() == current_db.upper())
+
+            return {
+                "status": "success",
+                "current_database": current_db,
+                "instance": f"{self.db_config.get('host', 'localhost')}:{self.db_config.get('port', 1521)}",
+                "count": len(databases),
+                "databases": databases
+            }
+        except Exception as e:
+            logger.error(f"Failed to list databases: {e}")
+            return {"status": "error", "error": str(e)}
         finally:
             conn.close()
 

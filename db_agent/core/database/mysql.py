@@ -575,6 +575,10 @@ class MySQLTools(BaseDatabaseTools):
                 "error": t("db_only_select")
             }
 
+        func_check = self._check_function_call_in_select(sql_upper)
+        if func_check:
+            return func_check
+
         conn = self.get_connection()
         try:
             cur = conn.cursor()
@@ -609,6 +613,11 @@ class MySQLTools(BaseDatabaseTools):
         Returns:
             Execution result
         """
+        # Strip DELIMITER commands (MySQL CLI only, not supported via API)
+        sql = re.sub(r'(?mi)^\s*DELIMITER\s+.*$', '', sql).strip()
+        # Remove custom delimiters like $$ at end of statements
+        sql = re.sub(r'\$\$\s*$', '', sql).strip()
+
         sql_upper = sql.strip().upper()
 
         # Read-only queries execute directly without confirmation
@@ -839,6 +848,37 @@ class MySQLTools(BaseDatabaseTools):
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            conn.close()
+
+    def list_databases(self) -> Dict[str, Any]:
+        """List all databases on the MySQL server instance"""
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT s.SCHEMA_NAME AS name,
+                       CONCAT(ROUND(COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0) / 1024 / 1024, 2), ' MB') AS size
+                FROM information_schema.SCHEMATA s
+                LEFT JOIN information_schema.TABLES t ON s.SCHEMA_NAME = t.TABLE_SCHEMA
+                WHERE s.SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                GROUP BY s.SCHEMA_NAME
+                ORDER BY s.SCHEMA_NAME
+            """)
+            databases = cur.fetchall()
+            current_db = self.db_config.get("database", "")
+            for db in databases:
+                db["is_current"] = (db["name"] == current_db)
+            return {
+                "status": "success",
+                "current_database": current_db,
+                "instance": f"{self.db_config.get('host', 'localhost')}:{self.db_config.get('port', 3306)}",
+                "count": len(databases),
+                "databases": databases
+            }
+        except Exception as e:
+            logger.error(f"Failed to list databases: {e}")
+            return {"status": "error", "error": str(e)}
         finally:
             conn.close()
 

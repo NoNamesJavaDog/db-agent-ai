@@ -491,6 +491,41 @@ class SQLiteStorage:
             updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None
         )
 
+    def find_connection_for_instance_db(self, db_type: str, host: str, port: int,
+                                        username: str, database: str) -> Optional[DatabaseConnection]:
+        """Find an existing connection for the same instance and database."""
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                '''SELECT * FROM database_connections
+                   WHERE db_type = ? AND host = ? AND port = ? AND username = ? AND db_name = ?''',
+                (db_type, host, port, username, database)
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_connection(row)
+            return None
+        finally:
+            db_conn.close()
+
+    def get_instance_connections(self, db_type: str, host: str, port: int,
+                                 username: str) -> List[DatabaseConnection]:
+        """Get all connections for the same server instance."""
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                '''SELECT * FROM database_connections
+                   WHERE db_type = ? AND host = ? AND port = ? AND username = ?
+                   ORDER BY db_name''',
+                (db_type, host, port, username)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_connection(row) for row in rows]
+        finally:
+            db_conn.close()
+
     # ==================== LLM Provider Methods ====================
 
     def add_provider(self, provider: LLMProvider) -> int:
