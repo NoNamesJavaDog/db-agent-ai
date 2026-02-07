@@ -15,9 +15,14 @@ Architecture:
 from .config import MCPServerConfig
 from .client import MCPClient
 from .manager import MCPManager
+from .errors import MCPError, MCPConnectionError, MCPTimeoutError, MCPToolError
 
 __all__ = [
     'MCPServerConfig',
     'MCPClient',
     'MCPManager',
+    'MCPError',
+    'MCPConnectionError',
+    'MCPTimeoutError',
+    'MCPToolError',
 ]

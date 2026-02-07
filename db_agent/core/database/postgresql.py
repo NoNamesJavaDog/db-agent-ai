@@ -616,6 +616,11 @@ class PostgreSQLTools(BaseDatabaseTools):
                 "error": t("db_only_select")
             }
 
+        # Detect SELECT that calls functions/stored procedures
+        func_check = self._check_function_call_in_select(sql_upper)
+        if func_check:
+            return func_check
+
         conn = self.get_connection()
         try:
             cur = conn.cursor()
@@ -891,6 +896,37 @@ class PostgreSQLTools(BaseDatabaseTools):
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            conn.close()
+
+    def list_databases(self) -> Dict[str, Any]:
+        """List all databases on the PostgreSQL server instance"""
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT datname AS name,
+                       pg_size_pretty(pg_database_size(datname)) AS size,
+                       pg_catalog.pg_get_userbyid(datdba) AS owner
+                FROM pg_database
+                WHERE datistemplate = false
+                ORDER BY datname
+            """)
+            columns = [desc[0] for desc in cur.description]
+            databases = [dict(zip(columns, row)) for row in cur.fetchall()]
+            current_db = self.db_config.get("database", "")
+            for db in databases:
+                db["is_current"] = (db["name"] == current_db)
+            return {
+                "status": "success",
+                "current_database": current_db,
+                "instance": f"{self.db_config.get('host', 'localhost')}:{self.db_config.get('port', 5432)}",
+                "count": len(databases),
+                "databases": databases
+            }
+        except Exception as e:
+            logger.error(f"Failed to list databases: {e}")
+            return {"status": "error", "error": str(e)}
         finally:
             conn.close()
 

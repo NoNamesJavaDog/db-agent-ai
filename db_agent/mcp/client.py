@@ -12,6 +12,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from .config import MCPServerConfig
+from .errors import MCPConnectionError, MCPTimeoutError, MCPToolError
 
 logger = logging.getLogger(__name__)
 
@@ -55,66 +56,97 @@ class MCPClient:
         """Check if client is connected."""
         return self._connected
 
-    async def connect(self) -> None:
+    async def connect(self, max_retries: int = 3) -> None:
         """
-        Connect to the MCP server.
+        Connect to the MCP server with exponential backoff retry.
 
         Starts the server process and establishes stdio communication.
+        Retries up to max_retries times with exponential backoff (1s, 2s, 4s).
+
+        Args:
+            max_retries: Maximum number of connection attempts (default 3)
+
+        Raises:
+            MCPConnectionError: If all connection attempts fail
+            ImportError: If MCP SDK is not installed
         """
-        try:
-            from mcp import ClientSession
-            from mcp.client.stdio import stdio_client, StdioServerParameters
+        last_error = None
 
-            # Create server parameters
-            server_params = StdioServerParameters(
-                command=self.config.command,
-                args=self.config.args,
-                env=self.config.env
-            )
+        for attempt in range(1, max_retries + 1):
+            try:
+                from mcp import ClientSession
+                from mcp.client.stdio import stdio_client, StdioServerParameters
 
-            # Create and enter stdio context
-            self._stdio_context = stdio_client(server_params)
-            read_stream, write_stream = await self._stdio_context.__aenter__()
+                # Create server parameters
+                server_params = StdioServerParameters(
+                    command=self.config.command,
+                    args=self.config.args,
+                    env=self.config.env
+                )
 
-            # Create and enter session context
-            self._session = ClientSession(read_stream, write_stream)
-            self._session_context = self._session
-            await self._session.__aenter__()
+                # Create and enter stdio context
+                self._stdio_context = stdio_client(server_params)
+                read_stream, write_stream = await self._stdio_context.__aenter__()
 
-            # Initialize the session
-            result = await self._session.initialize()
-            self.server_info = {
-                "name": result.serverInfo.name if result.serverInfo else self.name,
-                "version": result.serverInfo.version if result.serverInfo else "unknown"
-            }
-            self._connected = True
+                # Create and enter session context
+                self._session = ClientSession(read_stream, write_stream)
+                self._session_context = self._session
+                await self._session.__aenter__()
 
-            logger.info(f"MCP Client connected to server: {self.name}")
+                # Initialize the session
+                result = await self._session.initialize()
+                self.server_info = {
+                    "name": result.serverInfo.name if result.serverInfo else self.name,
+                    "version": result.serverInfo.version if result.serverInfo else "unknown"
+                }
+                self._connected = True
 
-        except ImportError as e:
-            logger.error(f"MCP SDK not installed. Please install with: pip install mcp[cli]")
-            raise ImportError("MCP SDK not installed. Install with: pip install mcp[cli]") from e
-        except Exception as e:
-            logger.error(f"Failed to connect to MCP server {self.name}: {e}")
-            # Clean up on failure
-            await self._cleanup()
-            raise ConnectionError(f"Failed to connect to MCP server {self.name}: {e}") from e
+                logger.info(f"MCP Client connected to server: {self.name}")
+                return
+
+            except ImportError as e:
+                logger.error(f"MCP SDK not installed. Please install with: pip install mcp[cli]")
+                raise ImportError("MCP SDK not installed. Install with: pip install mcp[cli]") from e
+            except Exception as e:
+                last_error = e
+                await self._cleanup()
+
+                if attempt < max_retries:
+                    delay = 2 ** (attempt - 1)  # 1s, 2s, 4s
+                    logger.warning(
+                        f"Connection attempt {attempt}/{max_retries} to MCP server "
+                        f"{self.name} failed: {e}. Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"All {max_retries} connection attempts to MCP server "
+                        f"{self.name} failed. Last error: {e}"
+                    )
+
+        raise MCPConnectionError(
+            f"Failed to connect to MCP server {self.name} after {max_retries} attempts: {last_error}",
+            server_name=self.name,
+            cause=last_error
+        )
 
     async def _cleanup(self) -> None:
-        """Clean up resources."""
-        if self._session_context:
-            try:
-                await self._session.__aexit__(None, None, None)
-            except Exception as e:
-                logger.debug(f"Error closing session: {e}")
+        """Clean up resources. Ensures state is always reset even on errors."""
+        try:
+            if self._session_context:
+                try:
+                    await self._session.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Error closing session for {self.name}: {e}")
+
+            if self._stdio_context:
+                try:
+                    await self._stdio_context.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Error closing stdio for {self.name}: {e}")
+        finally:
             self._session_context = None
             self._session = None
-
-        if self._stdio_context:
-            try:
-                await self._stdio_context.__aexit__(None, None, None)
-            except Exception as e:
-                logger.debug(f"Error closing stdio: {e}")
             self._stdio_context = None
 
     async def close(self) -> None:
@@ -175,47 +207,90 @@ class MCPClient:
         """
         Call a tool on the MCP server.
 
+        If the connection is lost, attempts one automatic reconnect before failing.
+
         Args:
             tool_name: Name of the tool (without mcp_servername_ prefix)
             arguments: Tool arguments
 
         Returns:
             Tool result as dictionary
+
+        Raises:
+            MCPToolError: If tool execution fails after reconnect attempt
         """
         if not self._connected:
-            raise ConnectionError("Not connected to MCP server")
+            raise MCPConnectionError(
+                f"Not connected to MCP server {self.name}",
+                server_name=self.name
+            )
 
-        try:
-            result = await self._session.call_tool(tool_name, arguments)
+        for attempt in range(2):  # First try + one reconnect attempt
+            try:
+                result = await self._session.call_tool(tool_name, arguments)
 
-            # Process result content
-            if result.content:
-                # MCP returns content as a list of content blocks
-                contents = []
-                for content in result.content:
-                    if hasattr(content, 'text'):
-                        contents.append(content.text)
-                    elif hasattr(content, 'data'):
-                        contents.append(str(content.data))
-                    else:
-                        contents.append(str(content))
+                # Process result content
+                if result.content:
+                    # MCP returns content as a list of content blocks
+                    contents = []
+                    for content in result.content:
+                        if hasattr(content, 'text'):
+                            contents.append(content.text)
+                        elif hasattr(content, 'data'):
+                            contents.append(str(content.data))
+                        else:
+                            contents.append(str(content))
 
-                return {
-                    "status": "success" if not result.isError else "error",
-                    "content": "\n".join(contents) if contents else None
-                }
-            else:
-                return {
-                    "status": "success",
-                    "content": None
-                }
+                    return {
+                        "status": "success" if not result.isError else "error",
+                        "content": "\n".join(contents) if contents else None
+                    }
+                else:
+                    return {
+                        "status": "success",
+                        "content": None
+                    }
 
-        except Exception as e:
-            logger.error(f"Failed to call tool {tool_name} on {self.name}: {e}")
-            return {
-                "status": "error",
-                "error": str(e)
-            }
+            except Exception as e:
+                if attempt == 0:
+                    # First failure - attempt reconnect
+                    logger.warning(
+                        f"Tool call {tool_name} on {self.name} failed: {e}. "
+                        f"Attempting reconnect..."
+                    )
+                    try:
+                        await self._cleanup()
+                        self._connected = False
+                        await self.connect()
+                        continue  # Retry the tool call after reconnect
+                    except Exception as reconnect_error:
+                        logger.error(
+                            f"Reconnect to {self.name} failed: {reconnect_error}"
+                        )
+                        raise MCPToolError(
+                            f"Failed to call tool {tool_name} on {self.name} "
+                            f"(reconnect also failed): {e}",
+                            tool_name=tool_name,
+                            server_name=self.name
+                        ) from e
+                else:
+                    # Second failure after reconnect
+                    logger.error(
+                        f"Failed to call tool {tool_name} on {self.name} "
+                        f"after reconnect: {e}"
+                    )
+                    raise MCPToolError(
+                        f"Failed to call tool {tool_name} on {self.name}: {e}",
+                        tool_name=tool_name,
+                        server_name=self.name
+                    ) from e
+
+        # Should not reach here, but handle gracefully
+        raise MCPToolError(
+            f"Unexpected state calling tool {tool_name} on {self.name}",
+            tool_name=tool_name,
+            server_name=self.name
+        )
 
     def get_tools(self) -> List[Dict]:
         """
@@ -225,6 +300,24 @@ class MCPClient:
             List of tool definitions in OpenAI function format
         """
         return self._tools
+
+    async def health_check(self) -> bool:
+        """
+        Check if the connection to the MCP server is alive.
+
+        Calls list_tools() to verify the connection is functional.
+
+        Returns:
+            True if the server is healthy and responsive, False otherwise
+        """
+        if not self._connected:
+            return False
+        try:
+            await self.list_tools()
+            return True
+        except Exception as e:
+            logger.warning(f"Health check failed for MCP server {self.name}: {e}")
+            return False
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -255,13 +348,13 @@ class MCPClientSync:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create event loop."""
+        """Get or create a private event loop.
+
+        Uses a dedicated event loop to avoid conflicts when called from
+        an already-running loop context.
+        """
         if self._loop is None or self._loop.is_closed():
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
+            self._loop = asyncio.new_event_loop()
         return self._loop
 
     def connect(self) -> None:

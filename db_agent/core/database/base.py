@@ -92,6 +92,20 @@ class BaseDatabaseTools(ABC):
         """Execute any SQL statement (INSERT/UPDATE/DELETE/CREATE/ALTER/DROP etc.)"""
         pass
 
+    @staticmethod
+    def _check_function_call_in_select(sql_upper: str) -> Optional[Dict[str, Any]]:
+        """Detect SELECT that calls functions/stored procedures without FROM.
+        These may modify data and should go through execute_sql with confirmation.
+        Returns an error dict if detected, None otherwise."""
+        import re
+        if sql_upper.startswith("SELECT") and not re.search(r'\bFROM\b', sql_upper):
+            if re.search(r'SELECT\s+\w+\s*\(', sql_upper):
+                return {
+                    "status": "error",
+                    "error": "This SELECT calls a function/stored procedure that may modify data. Please use execute_sql instead so the user can review and confirm."
+                }
+        return None
+
     @abstractmethod
     def execute_safe_query(self, sql: str) -> Dict[str, Any]:
         """Execute safe read-only SELECT query"""
@@ -135,6 +149,11 @@ class BaseDatabaseTools(ABC):
     @abstractmethod
     def get_sample_data(self, table_name: str, schema: str = None, limit: int = 10) -> Dict[str, Any]:
         """Get sample data from a table"""
+        pass
+
+    @abstractmethod
+    def list_databases(self) -> Dict[str, Any]:
+        """List all databases on the current server instance"""
         pass
 
     @property

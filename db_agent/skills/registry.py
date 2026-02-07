@@ -138,9 +138,12 @@ class SkillRegistry:
             self.load()
         return len(self._skills)
 
-    def get_skills_prompt(self) -> str:
+    def get_skills_prompt(self, language: str = "en") -> str:
         """
         Generate skills description text for system prompt.
+
+        Args:
+            language: Language code ("en" or "zh")
 
         Returns:
             Formatted string describing available skills for AI to use
@@ -149,11 +152,65 @@ class SkillRegistry:
         if not skills:
             return ""
 
-        lines = ["## Available Skills", ""]
-        lines.append("The following skills are available. Use them when the user's request matches their purpose:")
-        lines.append("")
+        if language == "zh":
+            lines = [
+                "## 可用技能 (Skills) — 重要",
+                "",
+                "⚠️ **当用户提到\u201cskills\u201d、\u201c技能\u201d或技能名称时，你必须先调用对应的技能工具，不要自行操作！**",
+                "",
+                "以下技能是专业领域知识模块。当用户的请求涉及某个技能的领域时，你**必须**先调用对应的技能工具（`skill_<名称>`）来获取详细操作指南，然后严格按照返回的指南完成任务。",
+                "",
+                "**技能使用规则：**",
+                "1. 当用户提到某个技能名称，或请求明显属于某技能的领域时，立即调用该技能工具——不要先调用list_tables或其他数据库工具",
+                "2. 调用技能工具后，你会收到详细的分步指南，严格按照指南执行",
+                "3. 不要在未调用技能的情况下自行猜测操作步骤",
+                "",
+            ]
+        else:
+            lines = [
+                "## Available Skills — IMPORTANT",
+                "",
+                "⚠️ **When the user mentions \"skills\", a skill name, or their request matches a skill's domain, you MUST call the skill tool FIRST — do NOT start working on your own!**",
+                "",
+                "The following skills are specialized domain knowledge modules. When the user's request relates to a skill's domain, you **MUST** call the corresponding skill tool (`skill_<name>`) FIRST to get detailed instructions, then follow those instructions to complete the task.",
+                "",
+                "**Skill usage rules:**",
+                "1. When the user mentions a skill name, or their request clearly falls within a skill's domain, immediately call that skill tool — do NOT call list_tables or other database tools first",
+                "2. After calling the skill tool, you will receive step-by-step instructions — follow them strictly",
+                "3. Do NOT improvise or guess the steps without calling the skill first",
+                "",
+            ]
 
         for skill in skills:
-            lines.append(f"- **skill_{skill.name}**: {skill.description or f'Execute skill: {skill.name}'}")
+            tool_name = f"skill_{skill.name}"
+            desc = skill.description or f"Execute skill: {skill.name}"
+            # Extract capability keywords from skill instructions to help
+            # the model match user requests to the right skill.
+            keywords = self._extract_capability_keywords(skill.instructions)
+            if keywords:
+                lines.append(f"- **{tool_name}**: {desc}")
+                kw_label = "触发关键词" if language == "zh" else "Triggers"
+                lines.append(f"  {kw_label}: {keywords}")
+            else:
+                lines.append(f"- **{tool_name}**: {desc}")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _extract_capability_keywords(instructions: str) -> str:
+        """Extract h3 headings under Capabilities as trigger keywords."""
+        import re
+        keywords = []
+        in_capabilities = False
+        for line in instructions.splitlines():
+            stripped = line.strip()
+            if re.match(r"^##\s+Capabilities", stripped, re.IGNORECASE):
+                in_capabilities = True
+                continue
+            if in_capabilities:
+                if re.match(r"^##\s+", stripped) and not re.match(r"^###", stripped):
+                    break  # next h2 section
+                m = re.match(r"^###\s+\d+\.\s+(.*)", stripped)
+                if m:
+                    keywords.append(m.group(1).strip())
+        return ", ".join(keywords) if keywords else ""

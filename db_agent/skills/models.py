@@ -71,11 +71,16 @@ class Skill:
 
     def to_tool_definition(self) -> dict:
         """Convert skill to OpenAI function tool definition format."""
+        desc = self.description or f"Execute skill: {self.name}"
+        # Enrich description with capability keywords from instructions
+        keywords = self._extract_capability_keywords()
+        if keywords:
+            desc = f"{desc}. Covers: {keywords}"
         return {
             "type": "function",
             "function": {
                 "name": f"skill_{self.name}",
-                "description": self.description or f"Execute skill: {self.name}",
+                "description": desc,
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -87,3 +92,21 @@ class Skill:
                 }
             }
         }
+
+    def _extract_capability_keywords(self) -> str:
+        """Extract h3 headings under Capabilities as trigger keywords."""
+        import re
+        keywords = []
+        in_capabilities = False
+        for line in self.instructions.splitlines():
+            stripped = line.strip()
+            if re.match(r"^##\s+Capabilities", stripped, re.IGNORECASE):
+                in_capabilities = True
+                continue
+            if in_capabilities:
+                if re.match(r"^##\s+", stripped) and not re.match(r"^###", stripped):
+                    break
+                m = re.match(r"^###\s+\d+\.\s+(.*)", stripped)
+                if m:
+                    keywords.append(m.group(1).strip())
+        return ", ".join(keywords) if keywords else ""

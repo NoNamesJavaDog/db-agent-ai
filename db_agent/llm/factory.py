@@ -31,7 +31,7 @@ class LLMClientFactory:
         "gemini": {
             "name": "Gemini",
             "base_url": None,
-            "default_model": "gemini-pro"
+            "default_model": "gemini-2.0-flash"
         },
         "qwen": {
             "name": "Qwen/通义千问",
