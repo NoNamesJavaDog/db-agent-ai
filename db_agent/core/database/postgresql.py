@@ -62,15 +62,37 @@ class PostgreSQLTools(BaseDatabaseTools):
             "database": self.db_config.get("database")
         }
 
-    def get_connection(self):
-        """Get database connection using pg8000"""
-        return pg8000.connect(
-            host=self.db_config.get("host", "localhost"),
-            port=int(self.db_config.get("port", 5432)),
-            database=self.db_config.get("database"),
-            user=self.db_config.get("user"),
-            password=self.db_config.get("password")
-        )
+    def get_connection(self, retries: int = 3):
+        """Get database connection using pg8000
+
+        Args:
+            retries: Number of retry attempts for transient failures
+        """
+        import time
+        last_error = None
+        for attempt in range(retries):
+            try:
+                return pg8000.connect(
+                    host=self.db_config.get("host", "localhost"),
+                    port=int(self.db_config.get("port", 5432)),
+                    database=self.db_config.get("database"),
+                    user=self.db_config.get("user"),
+                    password=self.db_config.get("password")
+                )
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                # Retry on transient connection errors
+                if attempt < retries - 1 and (
+                    "connection" in error_msg or
+                    "timeout" in error_msg or
+                    "refused" in error_msg
+                ):
+                    logger.warning(f"Connection attempt {attempt + 1} failed: {e}, retrying...")
+                    time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                else:
+                    raise
+        raise last_error
 
     def identify_slow_queries(self, min_duration_ms: float = 1000, limit: int = 20) -> Dict[str, Any]:
         """
@@ -83,13 +105,13 @@ class PostgreSQLTools(BaseDatabaseTools):
         Returns:
             Dictionary containing slow query list
         """
-        conn = self.get_connection()
-        try:
-            cur = conn.cursor()
+        # First, detect pg_stat_statements availability with a separate connection
+        has_pg_stat_statements = False
+        pg_stat_version = "new"  # PostgreSQL 13+ uses *_exec_time, older uses *_time
 
-            # Check if pg_stat_statements is available and properly loaded
-            has_pg_stat_statements = False
-            pg_stat_version = "new"  # PostgreSQL 13+ uses *_exec_time, older uses *_time
+        detect_conn = self.get_connection()
+        try:
+            cur = detect_conn.cursor()
             try:
                 # Try new version column names (PostgreSQL 13+)
                 cur.execute("SELECT total_exec_time, mean_exec_time FROM pg_stat_statements LIMIT 1;")
@@ -97,7 +119,7 @@ class PostgreSQLTools(BaseDatabaseTools):
                 has_pg_stat_statements = True
                 pg_stat_version = "new"
             except Exception:
-                conn.rollback()
+                detect_conn.rollback()
                 try:
                     # Try old version column names (PostgreSQL 12 and earlier)
                     cur.execute("SELECT total_time, mean_time FROM pg_stat_statements LIMIT 1;")
@@ -105,22 +127,21 @@ class PostgreSQLTools(BaseDatabaseTools):
                     has_pg_stat_statements = True
                     pg_stat_version = "old"
                 except Exception:
-                    conn.rollback()
                     pass  # pg_stat_statements not available
+        finally:
+            try:
+                detect_conn.close()
+            except Exception:
+                pass
 
+        # Now use a fresh connection for the actual query
+        conn = self.get_connection()
+        try:
             if not has_pg_stat_statements:
                 # Use pg_stat_activity as alternative
-                # Get a fresh connection since the current one may be in a bad state after rollbacks
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                new_conn = self.get_connection()
-                try:
-                    result = self._get_active_queries(new_conn, limit)
-                    return result
-                finally:
-                    new_conn.close()
+                return self._get_active_queries(conn, limit)
+
+            cur = conn.cursor()
 
             # Select correct column names based on PostgreSQL version
             if pg_stat_version == "new":
@@ -595,6 +616,11 @@ class PostgreSQLTools(BaseDatabaseTools):
                 "error": t("db_only_select")
             }
 
+        # Detect SELECT that calls functions/stored procedures
+        func_check = self._check_function_call_in_select(sql_upper)
+        if func_check:
+            return func_check
+
         conn = self.get_connection()
         try:
             cur = conn.cursor()
@@ -671,13 +697,23 @@ class PostgreSQLTools(BaseDatabaseTools):
                 "message": t("db_need_confirm")
             }
 
+        # Check if SQL requires autocommit (cannot run inside transaction block)
+        needs_autocommit = (
+            sql_upper.startswith("CREATE DATABASE") or
+            sql_upper.startswith("DROP DATABASE") or
+            sql_upper.startswith("VACUUM")
+        )
+
         # Confirmed, execute operation
         conn = self.get_connection()
+        if needs_autocommit:
+            conn.autocommit = True
         try:
             cur = conn.cursor()
             cur.execute(sql)
             rowcount = cur.rowcount
-            conn.commit()
+            if not needs_autocommit:
+                conn.commit()
             return {
                 "status": "success",
                 "type": "execute",
@@ -686,7 +722,8 @@ class PostgreSQLTools(BaseDatabaseTools):
             }
 
         except Exception as e:
-            conn.rollback()
+            if not needs_autocommit:
+                conn.rollback()
             logger.error(f"SQL execution failed: {e}")
             return {
                 "status": "error",
@@ -859,6 +896,37 @@ class PostgreSQLTools(BaseDatabaseTools):
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            conn.close()
+
+    def list_databases(self) -> Dict[str, Any]:
+        """List all databases on the PostgreSQL server instance"""
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT datname AS name,
+                       pg_size_pretty(pg_database_size(datname)) AS size,
+                       pg_catalog.pg_get_userbyid(datdba) AS owner
+                FROM pg_database
+                WHERE datistemplate = false
+                ORDER BY datname
+            """)
+            columns = [desc[0] for desc in cur.description]
+            databases = [dict(zip(columns, row)) for row in cur.fetchall()]
+            current_db = self.db_config.get("database", "")
+            for db in databases:
+                db["is_current"] = (db["name"] == current_db)
+            return {
+                "status": "success",
+                "current_database": current_db,
+                "instance": f"{self.db_config.get('host', 'localhost')}:{self.db_config.get('port', 5432)}",
+                "count": len(databases),
+                "databases": databases
+            }
+        except Exception as e:
+            logger.error(f"Failed to list databases: {e}")
+            return {"status": "error", "error": str(e)}
         finally:
             conn.close()
 

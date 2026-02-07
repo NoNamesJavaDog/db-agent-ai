@@ -59,6 +59,7 @@ try:
     from prompt_toolkit import prompt as pt_prompt
     from prompt_toolkit.completion import WordCompleter
     from prompt_toolkit.styles import Style
+    from prompt_toolkit.history import FileHistory
     PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     PROMPT_TOOLKIT_AVAILABLE = False
@@ -71,7 +72,16 @@ from db_agent.core.database import DatabaseToolsFactory
 from db_agent.llm import LLMClientFactory
 from db_agent.i18n import i18n, t
 from db_agent.storage import SQLiteStorage, DatabaseConnection, LLMProvider, Session, ChatMessage, encrypt, decrypt
+from db_agent.skills import SkillRegistry, SkillExecutor
 from .config import ConfigManager, migrate_from_ini, find_config_ini
+from db_agent.cli.commands import (
+    ConnectionCommandsMixin,
+    ProviderCommandsMixin,
+    SessionCommandsMixin,
+    MCPCommandsMixin,
+    SkillsCommandsMixin,
+    MigrationCommandsMixin,
+)
 
 
 class EscapeKeyListener:
@@ -264,7 +274,7 @@ def inline_select(title: str, options: list, default_index: int = 0) -> str:
         return None
 
 
-class AgentCLI:
+class AgentCLI(ConnectionCommandsMixin, ProviderCommandsMixin, SessionCommandsMixin, MCPCommandsMixin, SkillsCommandsMixin, MigrationCommandsMixin):
     """AI Agent命令行界面"""
 
     def __init__(self, agent: SQLTuningAgent, storage: SQLiteStorage, config_manager: ConfigManager = None):
@@ -273,11 +283,21 @@ class AgentCLI:
         self.config_manager = config_manager  # For backward compatibility
         self.current_session_id = None  # Track current session
 
+        # Initialize Skills
+        self.skill_registry = SkillRegistry()
+        self.skill_registry.load()
+        self.skill_executor = SkillExecutor(self.skill_registry)
+
+        # Set skill registry on agent
+        self.agent.set_skill_registry(self.skill_registry)
+
         # 斜杠命令列表 (用于自动补全)
         self.slash_commands = [
             ("/help", "cmd_help"),
             ("/file", "cmd_file"),
             ("/migrate", "cmd_migrate"),
+            ("/mcp", "cmd_mcp"),
+            ("/skills", "cmd_skills"),
             ("/sessions", "cmd_sessions"),
             ("/session", "cmd_session"),
             ("/connections", "cmd_connections"),
@@ -322,10 +342,13 @@ class AgentCLI:
         self._loaded_file_content = None
         self._loaded_file_path = None
 
-        # 设置prompt_toolkit自动补全
+        # 设置prompt_toolkit自动补全和命令历史
         if PROMPT_TOOLKIT_AVAILABLE:
+            # Include skill names in autocomplete
+            all_commands = [cmd for cmd, _ in self.slash_commands]
+            all_commands.extend(self.skill_registry.get_user_invocable_names())
             self.command_completer = WordCompleter(
-                [cmd for cmd, _ in self.slash_commands],
+                all_commands,
                 ignore_case=True,
                 match_middle=False
             )
@@ -335,6 +358,13 @@ class AgentCLI:
                 'scrollbar.background': 'bg:#333333',
                 'scrollbar.button': 'bg:#666666',
             })
+            # 命令历史文件
+            history_dir = os.path.expanduser("~/.db_agent")
+            os.makedirs(history_dir, exist_ok=True)
+            history_file = os.path.join(history_dir, "command_history")
+            self.command_history = FileHistory(history_file)
+        else:
+            self.command_history = None
 
         # ESC 键监听器
         self.esc_listener = EscapeKeyListener()
@@ -390,10 +420,11 @@ class AgentCLI:
         help_table.add_row("/help", t("cmd_help"))
         help_table.add_row("/file [path]", t("cmd_file"))
         help_table.add_row("/migrate", t("cmd_migrate"))
+        help_table.add_row("/mcp <list|add|remove|enable|disable|tools>", t("cmd_mcp"))
         help_table.add_row("/sessions", t("cmd_sessions"))
         help_table.add_row("/session <new|use|delete|rename>", t("cmd_session"))
         help_table.add_row("/connections", t("cmd_connections"))
-        help_table.add_row("/connection <add|use|edit|delete|test>", "Manage connections")
+        help_table.add_row("/connection <add|use|edit|delete|test|use-db>", "Manage connections")
         help_table.add_row("/providers", t("cmd_providers"))
         help_table.add_row("/provider <add|use|edit|delete>", "Manage AI models")
         help_table.add_row("/model", t("cmd_model"))
@@ -560,692 +591,6 @@ class AgentCLI:
 
         console.print()
 
-    # ==================== Connection Management ====================
-
-    def show_connections(self):
-        """显示数据库连接列表"""
-        console.print()
-        connections = self.storage.list_connections()
-
-        if not connections:
-            console.print(f"[dim]{t('connections_empty')}[/]")
-            console.print()
-            console.print(f"[cyan]{t('input_hint', help='/connection add', model='', lang='', exit='')}[/]")
-            console.print()
-            return
-
-        table = Table(box=box.ROUNDED, padding=(0, 2))
-        table.add_column("#", style="cyan", justify="center", width=3)
-        table.add_column(t("connection_name"), style="white")
-        table.add_column(t("connection_type"), style="white")
-        table.add_column(t("connection_host"), style="white")
-        table.add_column(t("connection_database"), style="white")
-        table.add_column(t("connection_status"), style="white")
-
-        for i, conn in enumerate(connections, 1):
-            status = f"[green]{t('connection_active')}[/]" if conn.is_active else ""
-            table.add_row(
-                str(i),
-                conn.name,
-                conn.db_type,
-                f"{conn.host}:{conn.port}",
-                conn.database,
-                status
-            )
-
-        console.print(Panel(
-            table,
-            title=f"[bold cyan]{t('connections_title')}[/]",
-            border_style="cyan",
-            box=box.ROUNDED
-        ))
-
-        # Show sub-commands
-        console.print()
-        console.print("[dim]Commands: /connection add | /connection use <name> | /connection edit <name> | /connection delete <name> | /connection test [name][/]")
-        console.print()
-
-    def handle_connection_command(self, args: str):
-        """处理 /connection 子命令"""
-        parts = args.strip().split(maxsplit=1)
-        if not parts:
-            self.show_connections()
-            return
-
-        subcommand = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else None
-
-        if subcommand == "add":
-            self.add_connection_wizard()
-        elif subcommand == "use":
-            if arg:
-                self.switch_connection(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /connection use <name>")
-        elif subcommand == "edit":
-            if arg:
-                self.edit_connection(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /connection edit <name>")
-        elif subcommand == "delete":
-            if arg:
-                self.delete_connection(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /connection delete <name>")
-        elif subcommand == "test":
-            self.test_connection(arg)
-        else:
-            console.print(f"[red]{t('invalid_choice')}[/]")
-
-    def add_connection_wizard(self):
-        """添加新数据库连接的向导"""
-        console.print()
-        console.print(f"[bold cyan]{t('setup_step_db')}[/]")
-        console.print()
-
-        # Select database type
-        db_types = DatabaseToolsFactory.get_supported_types()
-        for i, db_type in enumerate(db_types, 1):
-            console.print(f"  [white]{i}.[/] {db_type}")
-
-        console.print()
-        choice = Prompt.ask(f"[cyan]{t('setup_db_type')}[/]", default="1")
-
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(db_types):
-                db_type = db_types[idx]
-            else:
-                console.print(f"[red]{t('invalid_choice')}[/]")
-                return
-        except ValueError:
-            console.print(f"[red]{t('enter_valid_number')}[/]")
-            return
-
-        # Default ports
-        default_ports = {
-            'postgresql': 5432,
-            'mysql': 3306,
-            'gaussdb': 5432,
-            'oracle': 1521,
-            'sqlserver': 1433
-        }
-
-        # Collect connection details
-        console.print()
-        host = Prompt.ask(f"[cyan]{t('setup_db_host')}[/]", default="localhost")
-        port_str = Prompt.ask(f"[cyan]{t('setup_db_port')}[/]", default=str(default_ports.get(db_type, 5432)))
-        try:
-            port = int(port_str)
-        except ValueError:
-            port = default_ports.get(db_type, 5432)
-
-        database = Prompt.ask(f"[cyan]{t('setup_db_name')}[/]", default="postgres" if db_type in ['postgresql', 'gaussdb'] else "")
-        username = Prompt.ask(f"[cyan]{t('setup_db_user')}[/]", default="postgres" if db_type in ['postgresql', 'gaussdb'] else "")
-        password = Prompt.ask(f"[cyan]{t('setup_db_password')}[/]", password=True)
-
-        # Generate default connection name
-        default_name = f"{db_type}_{host}_{database}"
-        conn_name = Prompt.ask(f"[cyan]{t('setup_conn_name')}[/]", default=default_name)
-
-        # Test connection
-        console.print()
-        with console.status(f"[dim]{t('setup_testing_connection')}[/]", spinner="dots"):
-            try:
-                db_config = {
-                    'type': db_type,
-                    'host': host,
-                    'port': port,
-                    'database': database,
-                    'user': username,
-                    'password': password
-                }
-                test_tools = DatabaseToolsFactory.create(db_type, db_config)
-                test_tools.get_db_info()  # Test connection
-                console.print(f"[green]{SYM_CHECK()}[/] {t('setup_connection_success')}")
-            except Exception as e:
-                console.print(f"[red]{SYM_CROSS()}[/] {t('setup_connection_failed', error=str(e))}")
-                if not Confirm.ask(f"[yellow]{t('setup_retry_connection')}[/]", default=True):
-                    return
-                self.add_connection_wizard()
-                return
-
-        # Save connection
-        from datetime import datetime
-        now = datetime.now()
-        conn = DatabaseConnection(
-            id=None,
-            name=conn_name,
-            db_type=db_type,
-            host=host,
-            port=port,
-            database=database,
-            username=username,
-            password_encrypted=encrypt(password),
-            is_active=False,
-            created_at=now,
-            updated_at=now
-        )
-
-        try:
-            self.storage.add_connection(conn)
-            console.print(f"[green]{SYM_CHECK()}[/] {t('connection_add_success', name=conn_name)}")
-
-            # Ask if set as active
-            if Confirm.ask(f"[cyan]{t('connection_switch_success', name=conn_name).replace(t('connection_switch_success', name=conn_name).split()[0], 'Set as active?')}[/]", default=True):
-                self.storage.set_active_connection(conn_name)
-        except Exception as e:
-            console.print(f"[red]{t('error')}:[/] {e}")
-
-        console.print()
-
-    def switch_connection(self, name: str):
-        """切换活跃连接"""
-        conn = self.storage.get_connection(name)
-        if not conn:
-            console.print(f"[red]{t('connection_not_found', name=name)}[/]")
-            return
-
-        self.storage.set_active_connection(name)
-        console.print(f"[green]{SYM_CHECK()}[/] {t('connection_switch_success', name=name)}")
-
-        # Reinitialize agent with new connection
-        try:
-            password = decrypt(conn.password_encrypted)
-            db_config = {
-                'type': conn.db_type,
-                'host': conn.host,
-                'port': conn.port,
-                'database': conn.database,
-                'user': conn.username,
-                'password': password
-            }
-            self.agent.reinitialize_db_tools(db_config)
-            console.print(f"[green]{SYM_CHECK()}[/] {t('connected')}")
-        except Exception as e:
-            console.print(f"[red]{SYM_CROSS()}[/] {t('connection_failed')}: {e}")
-
-    def edit_connection(self, name: str):
-        """编辑连接"""
-        conn = self.storage.get_connection(name)
-        if not conn:
-            console.print(f"[red]{t('connection_not_found', name=name)}[/]")
-            return
-
-        console.print()
-        console.print(f"[cyan]Editing connection: {name}[/]")
-        console.print(f"[dim]({t('input_press_enter_default')})[/]")
-        console.print()
-
-        host = Prompt.ask(f"[cyan]{t('setup_db_host')}[/]", default=conn.host)
-        port = Prompt.ask(f"[cyan]{t('setup_db_port')}[/]", default=str(conn.port))
-        database = Prompt.ask(f"[cyan]{t('setup_db_name')}[/]", default=conn.database)
-        username = Prompt.ask(f"[cyan]{t('setup_db_user')}[/]", default=conn.username)
-        password = Prompt.ask(f"[cyan]{t('setup_db_password')} (leave empty to keep)[/]", password=True, default="")
-
-        conn.host = host
-        conn.port = int(port)
-        conn.database = database
-        conn.username = username
-        if password:
-            conn.password_encrypted = encrypt(password)
-
-        self.storage.update_connection(conn)
-        console.print(f"[green]{SYM_CHECK()}[/] {t('connection_update_success', name=name)}")
-
-    def delete_connection(self, name: str):
-        """删除连接"""
-        conn = self.storage.get_connection(name)
-        if not conn:
-            console.print(f"[red]{t('connection_not_found', name=name)}[/]")
-            return
-
-        if conn.is_active:
-            console.print(f"[yellow]Warning: This is the active connection[/]")
-
-        if Confirm.ask(f"[yellow]{t('connection_delete_confirm', name=name)}[/]", default=False):
-            self.storage.delete_connection(name)
-            console.print(f"[green]{SYM_CHECK()}[/] {t('connection_delete_success', name=name)}")
-
-    def test_connection(self, name: str = None):
-        """测试连接"""
-        if name:
-            conn = self.storage.get_connection(name)
-            if not conn:
-                console.print(f"[red]{t('connection_not_found', name=name)}[/]")
-                return
-        else:
-            conn = self.storage.get_active_connection()
-            if not conn:
-                console.print(f"[red]{t('connections_empty')}[/]")
-                return
-            name = conn.name
-
-        with console.status(f"[dim]{t('setup_testing_connection')}[/]", spinner="dots"):
-            try:
-                password = decrypt(conn.password_encrypted)
-                db_config = {
-                    'type': conn.db_type,
-                    'host': conn.host,
-                    'port': conn.port,
-                    'database': conn.database,
-                    'user': conn.username,
-                    'password': password
-                }
-                test_tools = DatabaseToolsFactory.create(conn.db_type, db_config)
-                info = test_tools.get_db_info()
-                console.print(f"[green]{SYM_CHECK()}[/] {t('connection_test_success', name=name)}")
-                console.print(f"[dim]  {info.get('type', '')} {info.get('version', '')}[/]")
-            except Exception as e:
-                console.print(f"[red]{SYM_CROSS()}[/] {t('connection_test_failed', name=name, error=str(e))}")
-
-    # ==================== Provider Management ====================
-
-    def show_providers(self):
-        """显示 LLM 提供者列表"""
-        console.print()
-        providers = self.storage.list_providers()
-
-        if not providers:
-            console.print(f"[dim]{t('providers_empty')}[/]")
-            console.print()
-            console.print(f"[cyan]{t('input_hint', help='/provider add', model='', lang='', exit='')}[/]")
-            console.print()
-            return
-
-        table = Table(box=box.ROUNDED, padding=(0, 2))
-        table.add_column("#", style="cyan", justify="center", width=3)
-        table.add_column(t("provider_name"), style="white")
-        table.add_column(t("provider_type"), style="white")
-        table.add_column(t("provider_model"), style="white")
-        table.add_column(t("provider_status"), style="white")
-
-        for i, provider in enumerate(providers, 1):
-            status = f"[green]{t('provider_default')}[/]" if provider.is_default else ""
-            table.add_row(
-                str(i),
-                provider.name,
-                provider.provider,
-                provider.model,
-                status
-            )
-
-        console.print(Panel(
-            table,
-            title=f"[bold cyan]{t('providers_title')}[/]",
-            border_style="cyan",
-            box=box.ROUNDED
-        ))
-
-        # Show sub-commands
-        console.print()
-        console.print("[dim]Commands: /provider add | /provider use <name> | /provider edit <name> | /provider delete <name>[/]")
-        console.print()
-
-    def handle_provider_command(self, args: str):
-        """处理 /provider 子命令"""
-        parts = args.strip().split(maxsplit=1)
-        if not parts:
-            self.show_providers()
-            return
-
-        subcommand = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else None
-
-        if subcommand == "add":
-            self.add_provider_wizard()
-        elif subcommand == "use":
-            if arg:
-                self.switch_provider(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /provider use <name>")
-        elif subcommand == "edit":
-            if arg:
-                self.edit_provider(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /provider edit <name>")
-        elif subcommand == "delete":
-            if arg:
-                self.delete_provider(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /provider delete <name>")
-        else:
-            console.print(f"[red]{t('invalid_choice')}[/]")
-
-    def add_provider_wizard(self):
-        """添加新 LLM 提供者的向导"""
-        console.print()
-        console.print(f"[bold cyan]{t('setup_step_llm')}[/]")
-        console.print()
-
-        # Select provider type
-        providers = LLMClientFactory.get_available_providers()
-        provider_keys = list(providers.keys())
-
-        for i, (key, name) in enumerate(providers.items(), 1):
-            recommended = t('setup_provider_recommended') if key == 'deepseek' else ''
-            console.print(f"  [white]{i}.[/] {name} {recommended}")
-
-        console.print()
-        choice = Prompt.ask(f"[cyan]{t('setup_select_provider')}[/]", default="1")
-
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(provider_keys):
-                provider_type = provider_keys[idx]
-            else:
-                console.print(f"[red]{t('invalid_choice')}[/]")
-                return
-        except ValueError:
-            console.print(f"[red]{t('enter_valid_number')}[/]")
-            return
-
-        provider_info = LLMClientFactory.PROVIDERS[provider_type]
-        default_model = provider_info['default_model']
-
-        # Collect provider details
-        console.print()
-        api_key = Prompt.ask(f"[cyan]{t('setup_api_key_hint', provider=provider_info['name'])}[/]", password=True)
-        model = Prompt.ask(f"[cyan]{t('setup_model')} ({t('setup_model_default', model=default_model)})[/]", default=default_model)
-
-        base_url = None
-        if provider_info.get('base_url'):
-            base_url = Prompt.ask(f"[cyan]{t('setup_base_url')} ({t('setup_base_url_hint')})[/]", default=provider_info['base_url'])
-
-        # Provider name (use provider type as default)
-        provider_name = Prompt.ask(f"[cyan]{t('setup_provider_name')}[/]", default=provider_type)
-
-        # Test API
-        console.print()
-        with console.status(f"[dim]{t('setup_testing_api')}[/]", spinner="dots"):
-            try:
-                test_client = LLMClientFactory.create(
-                    provider=provider_type,
-                    api_key=api_key,
-                    model=model,
-                    base_url=base_url
-                )
-                # Simple test - just verify client creation succeeded
-                console.print(f"[green]{SYM_CHECK()}[/] {t('setup_api_success')}")
-            except Exception as e:
-                console.print(f"[red]{SYM_CROSS()}[/] {t('setup_api_failed', error=str(e))}")
-                if not Confirm.ask(f"[yellow]{t('setup_retry_api')}[/]", default=True):
-                    return
-                self.add_provider_wizard()
-                return
-
-        # Save provider
-        from datetime import datetime
-        now = datetime.now()
-
-        # Check if this is the first provider
-        existing_providers = self.storage.list_providers()
-        is_default = len(existing_providers) == 0
-
-        provider = LLMProvider(
-            id=None,
-            name=provider_name,
-            provider=provider_type,
-            api_key_encrypted=encrypt(api_key),
-            model=model,
-            base_url=base_url,
-            is_default=is_default,
-            created_at=now,
-            updated_at=now
-        )
-
-        try:
-            self.storage.add_provider(provider)
-            console.print(f"[green]{SYM_CHECK()}[/] {t('provider_add_success', name=provider_name)}")
-
-            # Ask if set as default
-            if not is_default:
-                if Confirm.ask(f"[cyan]Set as default?[/]", default=False):
-                    self.storage.set_default_provider(provider_name)
-        except Exception as e:
-            console.print(f"[red]{t('error')}:[/] {e}")
-
-        console.print()
-
-    def switch_provider(self, name: str):
-        """切换默认提供者"""
-        provider = self.storage.get_provider(name)
-        if not provider:
-            console.print(f"[red]{t('provider_not_found', name=name)}[/]")
-            return
-
-        self.storage.set_default_provider(name)
-        console.print(f"[green]{SYM_CHECK()}[/] {t('provider_switch_success', name=name)}")
-
-        # Switch agent's LLM client
-        try:
-            api_key = decrypt(provider.api_key_encrypted)
-            client = LLMClientFactory.create(
-                provider=provider.provider,
-                api_key=api_key,
-                model=provider.model,
-                base_url=provider.base_url
-            )
-            self.agent.switch_model(client)
-            console.print(f"[green]{SYM_CHECK()}[/] {t('model_switched')} [cyan]{client.get_provider_name()}[/] - [green]{client.get_model_name()}[/]")
-        except Exception as e:
-            console.print(f"[red]{SYM_CROSS()}[/] {t('model_switch_failed')}: {e}")
-
-    def edit_provider(self, name: str):
-        """编辑提供者"""
-        provider = self.storage.get_provider(name)
-        if not provider:
-            console.print(f"[red]{t('provider_not_found', name=name)}[/]")
-            return
-
-        console.print()
-        console.print(f"[cyan]Editing provider: {name}[/]")
-        console.print(f"[dim]({t('input_press_enter_default')})[/]")
-        console.print()
-
-        model = Prompt.ask(f"[cyan]{t('setup_model')}[/]", default=provider.model)
-        api_key = Prompt.ask(f"[cyan]{t('setup_api_key')} (leave empty to keep)[/]", password=True, default="")
-        base_url = Prompt.ask(f"[cyan]{t('setup_base_url')}[/]", default=provider.base_url or "")
-
-        provider.model = model
-        if api_key:
-            provider.api_key_encrypted = encrypt(api_key)
-        if base_url:
-            provider.base_url = base_url
-
-        self.storage.update_provider(provider)
-        console.print(f"[green]{SYM_CHECK()}[/] {t('provider_update_success', name=name)}")
-
-    def delete_provider(self, name: str):
-        """删除提供者"""
-        provider = self.storage.get_provider(name)
-        if not provider:
-            console.print(f"[red]{t('provider_not_found', name=name)}[/]")
-            return
-
-        providers = self.storage.list_providers()
-        if len(providers) <= 1:
-            console.print(f"[red]{t('provider_cannot_delete_only')}[/]")
-            return
-
-        if provider.is_default:
-            console.print(f"[yellow]{t('provider_cannot_delete_default')}[/]")
-            return
-
-        if Confirm.ask(f"[yellow]{t('provider_delete_confirm', name=name)}[/]", default=False):
-            self.storage.delete_provider(name)
-            console.print(f"[green]{SYM_CHECK()}[/] {t('provider_delete_success', name=name)}")
-
-    # ==================== Session Management ====================
-
-    def show_sessions(self):
-        """显示会话列表"""
-        console.print()
-        sessions = self.storage.list_sessions()
-
-        if not sessions:
-            console.print(f"[dim]{t('sessions_empty')}[/]")
-            console.print()
-            return
-
-        table = Table(box=box.ROUNDED, padding=(0, 2))
-        table.add_column("#", style="cyan", justify="center", width=3)
-        table.add_column("ID", style="dim", width=4)
-        table.add_column(t("session_name"), style="white")
-        table.add_column(t("session_messages"), style="white", justify="right")
-        table.add_column(t("session_created"), style="dim")
-        table.add_column(t("session_status"), style="white")
-
-        for i, session in enumerate(sessions, 1):
-            msg_count = self.storage.get_session_message_count(session.id)
-            status = f"[green]{t('session_current')}[/]" if session.is_current else ""
-            created = session.created_at.strftime("%Y-%m-%d %H:%M") if session.created_at else ""
-            table.add_row(
-                str(i),
-                str(session.id),
-                session.name,
-                str(msg_count),
-                created,
-                status
-            )
-
-        console.print(Panel(
-            table,
-            title=f"[bold cyan]{t('sessions_title')}[/]",
-            border_style="cyan",
-            box=box.ROUNDED
-        ))
-
-        # Show sub-commands
-        console.print()
-        console.print(f"[dim]Commands: /session new [name] | /session use <id|name> | /session delete <id|name> | /session rename <name>[/]")
-        console.print()
-
-    def handle_session_command(self, args: str):
-        """处理 /session 子命令"""
-        parts = args.strip().split(maxsplit=1)
-        if not parts:
-            self.show_sessions()
-            return
-
-        subcommand = parts[0].lower()
-        arg = parts[1].strip() if len(parts) > 1 else None
-
-        if subcommand == "new":
-            self.create_new_session(arg)
-        elif subcommand == "use":
-            if arg:
-                self.switch_session(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /session use <id|name>")
-        elif subcommand == "delete":
-            if arg:
-                self.delete_session(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /session delete <id|name>")
-        elif subcommand == "rename":
-            if arg:
-                self.rename_current_session(arg)
-            else:
-                console.print(f"[red]{t('error')}:[/] /session rename <name>")
-        else:
-            console.print(f"[red]{t('invalid_choice')}[/]")
-
-    def create_new_session(self, name: str = None):
-        """创建新会话"""
-        from datetime import datetime
-
-        if not name:
-            # Generate default name with timestamp
-            name = datetime.now().strftime(t("session_default_name_format"))
-
-        # Get current connection and provider
-        active_conn = self.storage.get_active_connection()
-        default_provider = self.storage.get_default_provider()
-
-        connection_id = active_conn.id if active_conn else None
-        provider_id = default_provider.id if default_provider else None
-
-        # Create session
-        session_id = self.storage.create_session(name, connection_id, provider_id)
-        self.storage.set_current_session(session_id)
-        self.current_session_id = session_id
-
-        # Reset agent conversation and set new session
-        self.agent.conversation_history = []
-        self.agent.session_id = session_id
-
-        console.print(f"[green]{SYM_CHECK()}[/] {t('session_created', name=name)}")
-
-    def switch_session(self, identifier: str):
-        """切换到指定会话"""
-        # Try to find by ID first
-        session = None
-        try:
-            session_id = int(identifier)
-            session = self.storage.get_session(session_id)
-        except ValueError:
-            # Try to find by name
-            session = self.storage.get_session_by_name(identifier)
-
-        if not session:
-            console.print(f"[red]{t('session_not_found', identifier=identifier)}[/]")
-            return
-
-        # Check if switching to current session
-        if session.is_current:
-            console.print(f"[dim]{t('session_already_current', name=session.name)}[/]")
-            return
-
-        # Set as current
-        self.storage.set_current_session(session.id)
-        self.current_session_id = session.id
-
-        # Restore conversation history
-        self.agent.conversation_history = []
-        self.agent.session_id = session.id
-        self.agent._restore_conversation_history()
-
-        msg_count = len(self.agent.conversation_history)
-        console.print(f"[green]{SYM_CHECK()}[/] {t('session_switched', name=session.name)}")
-        if msg_count > 0:
-            console.print(f"[dim]{t('session_restored_messages', count=msg_count)}[/]")
-
-    def delete_session(self, identifier: str):
-        """删除会话"""
-        # Try to find by ID first
-        session = None
-        try:
-            session_id = int(identifier)
-            session = self.storage.get_session(session_id)
-        except ValueError:
-            # Try to find by name
-            session = self.storage.get_session_by_name(identifier)
-
-        if not session:
-            console.print(f"[red]{t('session_not_found', identifier=identifier)}[/]")
-            return
-
-        # Cannot delete current session
-        if session.is_current:
-            console.print(f"[yellow]{t('session_cannot_delete_current')}[/]")
-            return
-
-        msg_count = self.storage.get_session_message_count(session.id)
-        if Confirm.ask(f"[yellow]{t('session_delete_confirm', name=session.name, count=msg_count)}[/]", default=False):
-            self.storage.delete_session(session.id)
-            console.print(f"[green]{SYM_CHECK()}[/] {t('session_deleted', name=session.name)}")
-
-    def rename_current_session(self, new_name: str):
-        """重命名当前会话"""
-        current_session = self.storage.get_current_session()
-        if not current_session:
-            console.print(f"[red]{t('session_no_current')}[/]")
-            return
-
-        self.storage.rename_session(current_session.id, new_name)
-        console.print(f"[green]{SYM_CHECK()}[/] {t('session_renamed', name=new_name)}")
-
     def reset_conversation(self):
         """重置对话"""
         self.agent.reset_conversation()
@@ -1403,316 +748,6 @@ class AgentCLI:
         self._loaded_file_content = None
         self._loaded_file_path = None
 
-    def migrate_wizard(self) -> str:
-        """
-        数据库迁移向导
-
-        Returns:
-            生成的迁移指令消息，如果取消则返回None
-        """
-        console.print()
-
-        # 获取当前连接的数据库类型
-        db_info = self.agent.db_tools.get_db_info()
-        target_db = db_info.get("type", "postgresql")
-        target_db_display = {
-            "postgresql": "PostgreSQL",
-            "mysql": "MySQL",
-            "gaussdb": "GaussDB",
-            "oracle": "Oracle"
-        }.get(target_db, target_db.upper())
-
-        console.print(f"[cyan]{t('migrate_target_db')}:[/] [green]{target_db_display}[/]")
-        console.print()
-
-        # 源数据库选择
-        source_dbs = [
-            ("oracle", "Oracle"),
-            ("mysql", "MySQL"),
-            ("postgresql", "PostgreSQL"),
-            ("sqlserver", "SQL Server"),
-            ("db2", "IBM DB2"),
-            ("other", t("migrate_other"))
-        ]
-
-        # 过滤掉当前数据库
-        source_dbs = [(k, v) for k, v in source_dbs if k != target_db]
-
-        table = Table(box=box.ROUNDED, padding=(0, 2))
-        table.add_column("#", style="cyan", justify="center", width=3)
-        table.add_column(t("migrate_source_db"), style="white")
-
-        for i, (key, name) in enumerate(source_dbs, 1):
-            table.add_row(str(i), name)
-
-        console.print(Panel(
-            table,
-            title=f"[bold cyan]{t('migrate_select_source')}[/]",
-            border_style="cyan",
-            box=box.ROUNDED
-        ))
-
-        console.print()
-        choice = Prompt.ask(
-            f"[cyan]{t('migrate_enter_number')}[/]",
-            default=""
-        )
-
-        if not choice:
-            console.print(f"[dim]{t('cancelled')}[/]")
-            return None
-
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(source_dbs):
-                source_db_key, source_db_name = source_dbs[idx]
-            else:
-                console.print(f"[red]{t('invalid_choice')}[/]")
-                return None
-        except ValueError:
-            console.print(f"[red]{t('enter_valid_number')}[/]")
-            return None
-
-        # 如果选择"其他"，提示输入
-        if source_db_key == "other":
-            source_db_name = Prompt.ask(
-                f"[cyan]{t('migrate_enter_source_name')}[/]",
-                default=""
-            )
-            if not source_db_name:
-                console.print(f"[dim]{t('cancelled')}[/]")
-                return None
-
-        console.print()
-        console.print(f"[green]{SYM_CHECK()}[/] {t('migrate_source_selected', source=source_db_name)}")
-        console.print()
-
-        # 加载SQL文件
-        file_path = Prompt.ask(
-            f"[cyan]{t('file_input_path')}[/]",
-            default=""
-        )
-
-        if not file_path:
-            console.print(f"[dim]{t('cancelled')}[/]")
-            return None
-
-        # 使用load_file方法加载
-        if not self.load_file(file_path):
-            return None
-
-        # 选择迁移模式
-        console.print()
-        console.print(f"[cyan]{t('migrate_mode_select')}:[/]")
-        console.print(f"  [white]1.[/] {t('migrate_mode_convert_only')}")
-        console.print(f"  [white]2.[/] {t('migrate_mode_convert_execute')}")
-        console.print()
-
-        mode_choice = Prompt.ask(
-            f"[cyan]{t('migrate_enter_mode')}[/]",
-            default="1"
-        )
-
-        if mode_choice == "2":
-            execute_mode = True
-            mode_text = t("migrate_will_execute")
-        else:
-            execute_mode = False
-            mode_text = t("migrate_convert_only")
-
-        console.print(f"[green]{SYM_CHECK()}[/] {mode_text}")
-        console.print()
-
-        # 构建迁移指令 - 针对Oracle到GaussDB使用专用指令
-        is_oracle_to_gaussdb = (source_db_key == "oracle" and target_db in ["gaussdb"])
-
-        if is_oracle_to_gaussdb:
-            # 使用专门优化的Oracle→GaussDB迁移指令
-            if execute_mode:
-                migrate_instruction = t("migrate_instruction_oracle_to_gaussdb_execute")
-            else:
-                migrate_instruction = t("migrate_instruction_oracle_to_gaussdb_convert")
-            console.print(f"[cyan]{t('migrate_using_optimized_rules')}[/]")
-        else:
-            # 使用通用迁移指令
-            if execute_mode:
-                migrate_instruction = t("migrate_instruction_execute",
-                                       source=source_db_name,
-                                       target=target_db_display)
-            else:
-                migrate_instruction = t("migrate_instruction_convert",
-                                       source=source_db_name,
-                                       target=target_db_display)
-
-        return migrate_instruction
-
-    def migrate_online_wizard(self) -> str:
-        """
-        在线数据库对象迁移向导
-
-        Returns:
-            生成的迁移指令消息，如果取消则返回None
-        """
-        console.print()
-        console.print(Panel(
-            f"[bold cyan]{t('migrate_online_title')}[/]",
-            border_style="cyan"
-        ))
-        console.print()
-
-        # 获取当前活跃连接（目标库）
-        active_conn = self.storage.get_active_connection()
-        if not active_conn:
-            console.print(f"[red]{t('migrate_no_active_connection')}[/]")
-            return None
-
-        target_db_display = {
-            "postgresql": "PostgreSQL",
-            "mysql": "MySQL",
-            "gaussdb": "GaussDB",
-            "oracle": "Oracle",
-            "sqlserver": "SQL Server"
-        }.get(active_conn.db_type, active_conn.db_type.upper())
-
-        console.print(f"[cyan]{t('migrate_target_db')}:[/] [green]{active_conn.name}[/] ({target_db_display})")
-        console.print()
-
-        # 获取所有连接（排除当前活跃连接）
-        all_connections = self.storage.list_connections()
-        source_connections = [c for c in all_connections if c.id != active_conn.id]
-
-        if not source_connections:
-            console.print(f"[yellow]{t('migrate_no_source_connections')}[/]")
-            console.print(f"[dim]{t('migrate_add_source_hint')}[/]")
-            return None
-
-        # 显示可选的源数据库
-        table = Table(box=box.ROUNDED, padding=(0, 2))
-        table.add_column("#", style="cyan", justify="center", width=3)
-        table.add_column(t("connection_name"), style="white")
-        table.add_column(t("connection_type"), style="dim")
-        table.add_column(t("connection_host"), style="dim")
-        table.add_column(t("connection_database"), style="dim")
-
-        for i, conn in enumerate(source_connections, 1):
-            db_type_display = {
-                "postgresql": "PostgreSQL",
-                "mysql": "MySQL",
-                "gaussdb": "GaussDB",
-                "oracle": "Oracle",
-                "sqlserver": "SQL Server"
-            }.get(conn.db_type, conn.db_type.upper())
-            table.add_row(str(i), conn.name, db_type_display, conn.host, conn.database)
-
-        console.print(Panel(
-            table,
-            title=f"[bold cyan]{t('migrate_select_source_connection')}[/]",
-            border_style="cyan",
-            box=box.ROUNDED
-        ))
-
-        console.print()
-        choice = Prompt.ask(
-            f"[cyan]{t('migrate_enter_number')}[/]",
-            default=""
-        )
-
-        if not choice:
-            console.print(f"[dim]{t('cancelled')}[/]")
-            return None
-
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(source_connections):
-                source_conn = source_connections[idx]
-            else:
-                console.print(f"[red]{t('invalid_choice')}[/]")
-                return None
-        except ValueError:
-            console.print(f"[red]{t('enter_valid_number')}[/]")
-            return None
-
-        source_db_display = {
-            "postgresql": "PostgreSQL",
-            "mysql": "MySQL",
-            "gaussdb": "GaussDB",
-            "oracle": "Oracle",
-            "sqlserver": "SQL Server"
-        }.get(source_conn.db_type, source_conn.db_type.upper())
-
-        console.print()
-        console.print(f"[green]{SYM_CHECK()}[/] {t('migrate_source_selected', source=source_conn.name)} ({source_db_display})")
-        console.print()
-
-        # 确认迁移方向
-        console.print(f"[cyan]{t('migrate_direction')}:[/]")
-        console.print(f"  {source_conn.name} ({source_db_display}) → {active_conn.name} ({target_db_display})")
-        console.print()
-
-        confirm = Prompt.ask(
-            f"[cyan]{t('migrate_confirm_direction')}[/]",
-            choices=["y", "n"],
-            default="y"
-        )
-
-        if confirm.lower() != "y":
-            console.print(f"[dim]{t('cancelled')}[/]")
-            return None
-
-        # 可选：指定schema
-        console.print()
-        source_schema = Prompt.ask(
-            f"[cyan]{t('migrate_source_schema')}[/]",
-            default=""
-        )
-
-        # 创建迁移任务
-        from datetime import datetime
-        task_name = f"Migration_{source_conn.name}_to_{active_conn.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        from db_agent.storage.models import MigrationTask
-        task = MigrationTask(
-            id=None,
-            name=task_name,
-            source_connection_id=source_conn.id,
-            target_connection_id=active_conn.id,
-            source_db_type=source_conn.db_type,
-            target_db_type=active_conn.db_type,
-            status="pending",
-            total_items=0,
-            completed_items=0,
-            failed_items=0,
-            skipped_items=0,
-            source_schema=source_schema or None,
-            target_schema=None,
-            options=None,
-            analysis_result=None,
-            error_message=None,
-            started_at=None,
-            completed_at=None,
-            created_at=datetime.now(),
-            updated_at=datetime.now()
-        )
-
-        task_id = self.storage.create_migration_task(task)
-
-        console.print()
-        console.print(f"[green]{SYM_CHECK()}[/] {t('migrate_task_created', task_id=task_id, name=task_name)}")
-        console.print()
-
-        # 构建迁移指令
-        migrate_instruction = t(
-            "migrate_online_instruction",
-            task_id=task_id,
-            source_name=source_conn.name,
-            source_type=source_db_display,
-            target_name=active_conn.name,
-            target_type=target_db_display,
-            source_schema=source_schema or "default"
-        )
-
-        return migrate_instruction
-
     def exit_cli(self):
         """退出CLI"""
         # 确保停止 ESC 监听
@@ -1831,6 +866,7 @@ class AgentCLI:
                             prompt_prefix,
                             completer=self.command_completer,
                             style=self.pt_style,
+                            history=self.command_history,
                             complete_while_typing=True
                         ).strip()
                     except (EOFError, KeyboardInterrupt):
@@ -1917,6 +953,31 @@ class AgentCLI:
                     args = parts[1].strip() if len(parts) > 1 else ""
                     self.handle_session_command(args)
                     continue
+
+                # 处理 /mcp 命令 (带子命令)
+                if user_input.lower().startswith('/mcp'):
+                    parts = user_input.split(maxsplit=1)
+                    args = parts[1].strip() if len(parts) > 1 else ""
+                    self.handle_mcp_command(args)
+                    continue
+
+                # 处理 /skills 命令 (带子命令)
+                if user_input.lower().startswith('/skills'):
+                    parts = user_input.split(maxsplit=1)
+                    args = parts[1].strip() if len(parts) > 1 else ""
+                    self.handle_skills_command(args)
+                    continue
+
+                # 处理 /<skill-name> 命令 - 调用外部 skill
+                if user_input.startswith('/') and len(user_input) > 1:
+                    # Check if this is a skill invocation
+                    parts = user_input[1:].split(maxsplit=1)  # Remove leading /
+                    potential_skill_name = parts[0]
+                    skill_args = parts[1] if len(parts) > 1 else ""
+
+                    if self.skill_registry.has_skill(potential_skill_name):
+                        self.execute_skill(potential_skill_name, skill_args)
+                        continue
 
                 # 如果有加载的文件，将文件内容作为上下文添加到消息中
                 if self._loaded_file_content and not user_input.startswith('/'):

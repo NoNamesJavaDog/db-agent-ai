@@ -87,8 +87,16 @@ class ContextCompressor:
             return history, {"compressed": False, "reason": "not_enough_messages"}
 
         # 分离需要压缩的消息和保留的消息
-        to_compress = history[:-self.keep_recent]
-        recent = history[-self.keep_recent:]
+        # 确保截断点不会拆开 tool_call / tool_response 对
+        split = len(history) - self.keep_recent
+        # 如果 recent 部分以 tool 消息开头，说明它的 tool_call 被留在了
+        # to_compress 侧，需要向前扩展 recent 直到包含对应的 assistant 消息
+        while split > 0 and history[split].get("role") == "tool":
+            split -= 1
+        if split <= 0:
+            return history, {"compressed": False, "reason": "cannot_find_safe_split"}
+        to_compress = history[:split]
+        recent = history[split:]
 
         # 计算压缩前的 token 数
         original_tokens = self.token_counter.count_messages_tokens(to_compress)
@@ -97,8 +105,8 @@ class ContextCompressor:
         try:
             summary = self._generate_summary(to_compress, language)
         except Exception as e:
-            logger.error(f"Failed to generate summary: {e}")
-            summary = self._fallback_summary(to_compress, language)
+            logger.error(f"Failed to generate summary: {e}, skipping compression")
+            return history, {"compressed": False, "reason": "summary_generation_failed"}
 
         # 创建摘要消息
         summary_msg = {

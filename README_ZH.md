@@ -1,1317 +1,688 @@
 [English](README.md) | **中文**
 
-# DB Agent - 数据库智能助手
+<div align="center">
 
-> **让 DBA 失业的 AI 数据库管理专家** —— 自然语言操作数据库，SQL 优化、性能诊断、数据管理一句话搞定
+# DB Agent AI
+
+### 开源 AI 原生数据库管理平台
+
+> 用自然语言和数据库对话。查询、优化、迁移、管理 —— 横跨 5 大数据库引擎、6 大 LLM 厂商 —— 通过 CLI、Web UI、REST API 或 MCP 随心使用。
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18+-61DAFB.svg)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5+-3178C6.svg)](https://www.typescriptlang.org)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**支持的数据库**
+
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791.svg)](https://postgresql.org)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1.svg)](https://mysql.com)
 [![Oracle](https://img.shields.io/badge/Oracle-12c+-F80000.svg)](https://www.oracle.com/database/)
 [![SQL Server](https://img.shields.io/badge/SQL%20Server-2014+-CC2927.svg)](https://www.microsoft.com/sql-server)
 [![GaussDB](https://img.shields.io/badge/GaussDB-集中式%20%7C%20分布式-red.svg)](https://www.huaweicloud.com/product/gaussdb.html)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**支持的 LLM 厂商**
+
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-Chat-blue.svg)](https://deepseek.com)
+[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-412991.svg)](https://openai.com)
+[![Claude](https://img.shields.io/badge/Anthropic-Claude-orange.svg)](https://anthropic.com)
+[![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)](https://ai.google.dev)
+[![Qwen](https://img.shields.io/badge/阿里云-通义千问-FF6A00.svg)](https://tongyi.aliyun.com)
+[![Ollama](https://img.shields.io/badge/Ollama-本地部署-000000.svg)](https://ollama.ai)
+
+</div>
 
 ---
 
-## 📖 目录
+## 为什么选择 DB Agent AI？
 
-- [产品介绍](#-产品介绍)
-- [核心功能](#-核心功能)
-- [系统架构](#-系统架构)
-- [安装部署](#-安装部署)
-- [快速开始](#-快速开始)
-- [使用场景](#-使用场景)
-- [配置说明](#-配置说明)
-- [API 服务](#-api-服务)
-- [常见问题](#-常见问题)
+大部分数据库工具都要求你会写 SQL。DB Agent AI 彻底反转了这个模式 —— **你只需描述需求，AI 自动生成 SQL、安全执行、解释结果**。它不是简单的聊天包装器，而是一个拥有 20+ 数据库工具、安全防护、自愈式错误恢复的完整自主智能体。
 
----
-
-## 🎯 产品介绍
-
-**DB Agent** 是一款革命性的 AI 数据库管理助手，它将复杂的数据库操作转化为简单的自然语言对话。无论你是开发者、数据分析师还是产品经理，都可以通过与 AI 对话的方式完成数据库的增删改查、性能优化、结构设计等工作。
-
-### 为什么选择 DB Agent？
-
-| 传统 DBA 方式 | DB Agent 方式 |
-|--------------|---------------|
-| 需要精通 SQL 语法 | 用自然语言描述需求 |
-| 手动分析执行计划 | AI 自动诊断性能问题 |
-| 查阅文档编写复杂查询 | 一句话生成优化 SQL |
-| 需要了解表结构才能操作 | AI 自动探索数据库结构 |
-| 索引优化需要丰富经验 | 智能推荐最佳索引策略 |
-| 手动转换异构数据库 DDL | AI 自动转换并执行对象迁移 |
-| 7x24 小时待命 | AI 永不疲倦随时响应 |
-
-### 核心优势
-
-- **🧠 智能理解** - 基于大语言模型，真正理解你的意图
-- **🔒 安全可控** - 危险操作需二次确认，杜绝误操作
-- **🔄 错误恢复** - 自动分析执行失败原因，智能调整策略重试
-- **🌍 多模型支持** - 支持 DeepSeek、OpenAI、Claude、Gemini、通义千问等主流模型
-- **🇨🇳 中英双语** - 完美支持中文交互，告别语言障碍
-- **📊 版本感知** - 自动识别数据库版本，生成兼容的 SQL
-- **⚡ 实时反馈** - 工具调用过程透明可见，执行结果即时展示
-- **💾 会话管理** - 基于 SQLite 的对话历史持久化存储
-- **🔌 多连接管理** - 支持多个数据库连接，随时切换
+| 能力维度 | 传统工具 | DB Agent AI |
+|---|---|---|
+| 查询数据 | 手写 SQL | "查一下上月各区域销售额" |
+| 性能调优 | 自己读 EXPLAIN 计划 | AI 诊断 + 建议 + 自动建索引 |
+| 表结构设计 | 手画 ER 图 | "帮我设计一个博客系统的表结构" |
+| 数据库迁移 | 手写 DDL 转换脚本 | 一键跨库迁移，自动语法转换 |
+| 错误处理 | 自己排查 | AI 自动分析错误并重试 |
+| 多数据库 | 学各家方言 | 一个界面管 5 种数据库 |
+| 结构化数据收集 | 手写表单代码 | AI 动态生成内联表单 |
 
 ---
 
-## 🚀 核心功能
+## 平台全景
 
-### 1. 数据查询与操作
 ```
-👤 用户: 查看 users 表里上个月注册的用户有多少
-🤖 Agent: 正在查询... 上个月共有 1,234 位新用户注册
-
-👤 用户: 把状态为 inactive 且超过一年没登录的用户标记为 archived
-🤖 Agent: 这个操作会影响 856 条记录，确认执行吗？[是/否]
-```
-
-### 2. 表结构管理
-```
-👤 用户: 帮我创建一个商品表，包含名称、价格、库存、分类
-🤖 Agent: 好的，我来创建 products 表...
-         [展示建表 SQL，等待确认]
-
-👤 用户: 给 orders 表加一个 shipping_address 字段
-🤖 Agent: 已添加 shipping_address 字段 (VARCHAR(500))
-```
-
-### 3. 性能诊断与优化
-```
-👤 用户: 这个查询很慢，帮我分析一下：SELECT * FROM orders WHERE user_id = 123
-🤖 Agent: 分析结果：
-         ❌ 问题：user_id 列缺少索引，导致全表扫描
-         ✅ 建议：CREATE INDEX idx_orders_user_id ON orders(user_id)
-         📈 预期提升：查询速度提升 50-100 倍
-```
-
-### 4. 索引管理
-```
-👤 用户: 检查 orders 表的索引使用情况
-🤖 Agent: 发现 3 个索引：
-         ✅ idx_orders_pkey - 使用频繁 (125,000 次扫描)
-         ✅ idx_orders_user_id - 使用正常 (45,000 次扫描)
-         ⚠️ idx_orders_old_status - 从未使用，建议删除 (节省 128MB)
-```
-
-### 5. 数据库健康检查
-```
-👤 用户: 检查数据库的整体健康状态
-🤖 Agent: 健康报告：
-         📊 表数量：23 个
-         💾 总大小：4.5 GB
-         ⚠️ 发现 3 个表有大量死元组，建议执行 VACUUM
-         ⚠️ 有 2 个慢查询需要优化
-```
-
-### 6. 在线数据库迁移
-```
-👤 用户: /migrate
-[选择: 2. 在线迁移]
-[选择源数据库: mysql-test]
-
-🤖 Agent: 正在分析源数据库 mysql-test...
-         发现 7 个表, 3 个视图, 3 个存储过程, 3 个函数, 3 个触发器
-
-         迁移计划：
-         | # | 类型 | 对象 | 状态 |
-         |---|------|------|------|
-         | 1 | 表 | users | 待执行 |
-         | 2 | 表 | departments | 待执行 |
-         | ... | ... | ... | ... |
-
-         确认执行迁移？[是/否]
-
-👤 用户: 是
-
-🤖 Agent: 正在执行迁移...
-         ✓ 创建表 users
-         ✓ 创建表 departments
-         ✓ 创建表 employees
-         ...
-         迁移完成：19/19 个对象迁移成功
+                         ┌──────────────────────────────────────┐
+                         │       DB Agent AI 平台                │
+                         └──────────────┬───────────────────────┘
+                                        │
+              ┌─────────────┬───────────┼───────────┬─────────────┐
+              ▼             ▼           ▼           ▼             ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │   CLI    │ │  Web UI  │ │ REST API │ │   MCP    │ │  Skills  │
+        │ (Rich)   │ │ (React)  │ │(FastAPI) │ │  服务器   │ │  引擎    │
+        └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘
+             └─────────────┴────────────┴────────────┴────────────┘
+                                        │
+                              ┌─────────┴─────────┐
+                              │  SQLTuningAgent    │
+                              │  ┌───────────────┐ │
+                              │  │ 工具注册中心    │ │  20+ 内置工具
+                              │  │ 上下文管理      │ │  自动压缩
+                              │  │ 安全防护层      │ │  写操作需确认
+                              │  │ 错误自愈        │ │  智能重试
+                              │  │ 审计日志        │ │  全链路追踪
+                              │  └───────────────┘ │
+                              └─────────┬──────────┘
+                    ┌───────────────────┼───────────────────┐
+                    ▼                   ▼                   ▼
+             ┌────────────┐     ┌────────────┐     ┌────────────┐
+             │ LLM 层     │     │ 数据库层    │     │ 存储层     │
+             │ 6 大厂商    │     │ 5 大引擎    │     │ SQLite    │
+             └────────────┘     └────────────┘     └────────────┘
 ```
 
 ---
 
-## 🏗 系统架构
+## 十大核心能力
+
+### 1. 多库统一，一个界面
+
+连接 **PostgreSQL、MySQL、Oracle、SQL Server、GaussDB** —— 对话中随时切换。AI 自动检测数据库版本，生成兼容 SQL。
+
+- **版本感知 SQL 生成** —— 绝不使用你数据库不支持的语法
+- **热切换连接** —— 多数据库无需重启
+- **跨库迁移** —— 任意两个数据库之间迁移对象
+- **纯 Python 驱动** —— 无需 ODBC、Oracle Client 等外部依赖
+
+### 2. 自主 AI 智能体（不只是聊天机器人）
+
+DB Agent 是一个**工具调用智能体**，自主串联多步操作完成复杂任务：
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        DB Agent                              │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   CLI 界面   │  │  API 服务   │  │  Web 界面   │         │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘         │
-│         │                │                │                 │
-│         └────────────────┼────────────────┘                 │
-│                          ▼                                  │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │                   SQLTuningAgent                       │ │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌───────────────┐  │ │
-│  │  │ 对话管理器   │  │  工具执行器  │  │ 安全确认机制  │  │ │
-│  │  └─────────────┘  └─────────────┘  └───────────────┘  │ │
-│  └───────────────────────────────────────────────────────┘ │
-│                          │                                  │
-│         ┌────────────────┼────────────────┬────────────┐   │
-│         ▼                ▼                ▼            ▼   │
-│  ┌─────────────┐  ┌─────────────┐  ┌───────┐ ┌──────────┐ │
-│  │ LLM 客户端   │  │ 数据库工具   │  │ 国际化 │ │ 数据存储  │ │
-│  │ ─────────── │  │ ─────────── │  └───────┘ │ ──────── │ │
-│  │ • DeepSeek  │  │ • 查询执行   │            │ SQLite   │ │
-│  │ • OpenAI    │  │ • 表结构管理 │            │ • 会话   │ │
-│  │ • Claude    │  │ • 索引分析   │            │ • 消息   │ │
-│  │ • Gemini    │  │ • 对象迁移   │            │ • 连接   │ │
-│  │ • Qwen      │  │ • 性能诊断   │            │ • 配置   │ │
-│  │ • Ollama    │  └─────────────┘            └──────────┘ │
-│  └─────────────┘         │                                 │
-│                          ▼                                  │
-│                   ┌─────────────┐                          │
-│                   │ PostgreSQL  │                          │
-│                   │   MySQL     │                          │
-│                   │   Oracle    │                          │
-│                   │ SQL Server  │                          │
-│                   │   GaussDB   │                          │
-│                   └─────────────┘                          │
-└─────────────────────────────────────────────────────────────┘
+你: "给账单系统生成 10000 条测试发票"
+
+Agent: 1. describe_table → 了解表结构
+       2. execute_sql   → 创建生成函数  [确认? ✓]
+       3. execute_sql   → 调用函数      [确认? ✓]
+       4. execute_safe_query → SELECT COUNT(*) 验证
+
+       "已在 billing 表创建 10,000 条发票。
+        总金额：¥4,523,891.50。全部验证通过。"
 ```
 
-### 项目结构
+- **多步任务自动完成** —— 串联工具直到任务完成
+- **错误自愈** —— 分析失败原因，自动调整 SQL 重试
+- **上下文压缩** —— 长对话自动摘要，不怕超 token 限制
+- **中断与恢复** —— 按 ESC 中断，随时继续或调整方向
+
+### 3. 安全第一
+
+每个危险操作都经过确认层：
 
 ```
-ai_agent/
-├── db_agent/                      # 主程序包
-│   ├── __init__.py                # 包导出
-│   ├── core/                      # 核心组件
-│   │   ├── agent.py               # SQLTuningAgent 智能体
-│   │   ├── migration_rules.py     # DDL 转换规则
-│   │   └── database/              # 数据库抽象层
-│   │       ├── base.py            # 基类（接口定义）
-│   │       ├── postgresql.py      # PostgreSQL 实现
-│   │       ├── mysql.py           # MySQL 实现
-│   │       ├── oracle.py          # Oracle 实现（12c+）
-│   │       ├── sqlserver.py       # SQL Server 实现（2014+）
-│   │       ├── gaussdb.py         # GaussDB 实现（集中式/分布式）
-│   │       └── factory.py         # 数据库工具工厂
-│   ├── llm/                       # LLM 客户端
-│   │   ├── base.py                # 基类
-│   │   ├── openai_compatible.py   # OpenAI/DeepSeek/Qwen/Ollama
-│   │   ├── claude.py              # Anthropic Claude
-│   │   ├── gemini.py              # Google Gemini
-│   │   └── factory.py             # 客户端工厂
-│   ├── storage/                   # 数据持久化（SQLite）
-│   │   ├── __init__.py            # 包导出
-│   │   ├── models.py              # 数据模型（会话、消息、连接等）
-│   │   ├── sqlite_storage.py      # SQLite 存储实现
-│   │   └── encryption.py          # 密码加密工具
-│   ├── api/                       # API 服务
-│   │   └── server.py              # FastAPI 应用
-│   ├── cli/                       # 命令行界面
-│   │   ├── app.py                 # CLI 应用
-│   │   └── config.py              # 配置管理
-│   └── i18n/                      # 国际化
-│       └── translations.py        # 翻译文件
-├── scripts/                       # 启动脚本
-│   ├── start.sh                   # Linux/macOS
-│   └── start.bat                  # Windows
-├── examples/                      # 示例代码
-│   └── examples.py
-├── main.py                        # 程序入口
-├── requirements.txt               # 依赖清单
-└── README.md                      # 说明文档
+Agent: 即将执行:
+       DELETE FROM users WHERE last_login < '2023-01-01';
+       将影响约 2,340 行。
+
+       [执行] [跳过] [修改SQL]
 ```
+
+- **写操作自动确认** —— INSERT / UPDATE / DELETE / DROP / CREATE 全需确认
+- **性能预检** —— 执行前检测全表扫描等性能问题
+- **只读快速通道** —— SELECT 查询无需确认直接执行
+- **在线索引创建** —— 自动使用 `CONCURRENTLY` / `ONLINE` 避免锁表
+- **全链路审计** —— 每条 SQL、每次工具调用、每次配置变更全部记录
+
+### 4. 现代 Web UI（React + TypeScript）
+
+全功能 Web 界面，实时流式交互：
+
+- **SSE 流式对话** —— 实时看到 AI 思考过程
+- **工具调用可视化** —— 每个工具执行状态实时展示
+- **内联确认卡片** —— 在聊天中直接审批/拒绝 SQL
+- **内联表单卡片** —— AI 可动态生成表单收集结构化数据
+- **迁移向导** —— 可视化分步数据库迁移
+- **迁移进度条** —— 实时迁移进度追踪
+- **连接管理器** —— UI 中添加/编辑/测试数据库连接
+- **模型管理器** —— 配置和切换 LLM 模型
+- **MCP 服务管理** —— 添加和监控 MCP 工具服务
+- **技能浏览器** —— 发现和调用 Skills
+- **中英双语** —— 完整的中英文支持
+- **8 个独立页面**：对话、连接、模型、会话、MCP、技能、迁移、设置
+
+### 5. 跨库迁移引擎
+
+在任意两个数据库之间迁移对象，智能 DDL 转换：
+
+```
+你: "把我的 Oracle 数据库迁移到 PostgreSQL"
+
+Agent: [在聊天中展示迁移卡片]
+       → 选择源库和目标库连接
+       → 分析源库：7 个表、3 个视图、3 个存储过程、12 个索引
+       → 自动转换 DDL 语法（NUMBER→INTEGER、SYSDATE→CURRENT_TIMESTAMP...）
+       → 实时进度条执行迁移
+       → 验证：比对源库和目标库
+       → 生成迁移报告
+```
+
+**支持的对象类型：** 表、索引、视图、函数、存储过程、触发器、序列、约束
+
+**全路径支持：**
+| 从 \ 到 | PostgreSQL | MySQL | Oracle | SQL Server | GaussDB |
+|---|---|---|---|---|---|
+| **PostgreSQL** | — | ✓ | ✓ | ✓ | ✓ |
+| **MySQL** | ✓ | — | ✓ | ✓ | ✓ |
+| **Oracle** | ✓ | ✓ | — | ✓ | ✓ (专项优化) |
+| **SQL Server** | ✓ | ✓ | ✓ | — | ✓ |
+| **GaussDB** | ✓ | ✓ | ✓ | ✓ | — |
+
+Oracle → GaussDB 迁移内置**专家级转换规则**，覆盖高级包替换（DBMS_LOB→DBE_LOB 等）、数据类型边界情况、PL/SQL 差异和语法陷阱。
+
+### 6. MCP 集成（Model Context Protocol）
+
+通过开放的 MCP 标准扩展 DB Agent 外部工具能力：
+
+**作为 MCP 客户端** —— 连接外部 MCP 服务器：
+```
+/mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /tmp
+→ AI 现在可以读写文件、列出目录
+```
+
+**作为 MCP 服务器** —— 将 DB Agent 工具暴露给 Claude Desktop 或任何 MCP 客户端：
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "python",
+      "args": ["-m", "db_agent.mcp.server", "--db-type", "postgresql", "--host", "localhost", "--database", "mydb"]
+    }
+  }
+}
+```
+
+暴露 10 个数据库工具：`list_tables`、`describe_table`、`get_sample_data`、`execute_query`、`run_explain`、`identify_slow_queries`、`get_table_stats`、`check_index_usage`、`get_running_queries`、`get_db_info`
+
+### 7. Skills 技能系统（兼容 Claude Code）
+
+通过可复用的指令集扩展 AI 能力 —— 兼容 Claude Code 技能格式：
+
+**8 个内置技能：**
+
+| 技能 | 命令 | 说明 |
+|---|---|---|
+| 数据库健康检查 | `/db-health-check` | 全面诊断：慢查询、膨胀、索引、存储 |
+| 索引顾问 | `/index-advisor` | 分析索引使用、发现缺失/冗余索引、推荐优化 |
+| SQL 代码审查 | `/sql-review` | 性能问题、安全漏洞、最佳实践违规 |
+| 查询分析报告 | `/query-report` | 深度执行计划分析与优化建议 |
+| 表文档生成 | `/table-docs` | 自动生成 Markdown 格式的表结构文档 |
+| 迁移预检 | `/migration-precheck` | 跨库迁移前的兼容性评估 |
+| QuickBooks 财务 | `/quickbooks-finance` | 全套财务管理：应收/应付、总账、库存、报表 |
+| DB Agent (Claude Code) | `/db-agent` | 在 Claude Code 中使用 DB Agent |
+
+**创建自定义技能** —— 只需添加一个 `SKILL.md` 文件：
+
+```markdown
+---
+name: my-audit
+description: 对数据库执行安全审计
+user-invocable: true
+---
+# 安全审计
+1. 检查默认密码
+2. 审查权限授予
+3. 扫描 SQL 注入风险
+关注领域: $ARGUMENTS
+```
+
+### 8. 内联表单卡片
+
+当 AI 需要用户提供结构化数据时，动态生成嵌入聊天的表单卡片：
+
+```
+你: "我要报销"
+
+Agent: [展示表单卡片]
+       ┌─────────────────────────────────┐
+       │ 报销申请                         │
+       │                                 │
+       │ 日期:        [2024-01-20    ]   │
+       │ 金额:        [              ]   │
+       │ 类别:        [交通费        ▼] │
+       │ 说明:        [              ]   │
+       │                                 │
+       │ [提交]  [取消]                   │
+       └─────────────────────────────────┘
+
+→ 用户填写表单 → 数据发送给 AI → AI 处理结构化数据
+```
+
+支持字段类型：text、number、select、textarea、date。AI 根据上下文自行判断何时显示什么表单。
+
+### 9. 三端合一：CLI + Web + API
+
+**CLI** —— 富文本终端 UI，支持命令历史、方向键导航、内联选择菜单：
+```bash
+python main.py
+```
+
+**Web UI** —— 现代 React SPA，实时 SSE 流式交互：
+```bash
+PORT=8000 python -m db_agent.api.server
+# 打开 http://localhost:8000
+```
+
+**REST API** —— 完整 v2 API，支持编程集成：
+```bash
+# SSE 流式对话
+curl -N -X POST http://localhost:8000/api/v2/chat/1/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "列出所有表"}'
+```
+
+### 10. 企业级能力
+
+- **审计日志** —— 每条 SQL 执行、工具调用、配置变更全部带时间戳记录
+- **会话持久化** —— 对话跨重启保留，SQLite 存储
+- **密码加密** —— 所有数据库密码和 API Key 加密存储
+- **上下文压缩** —— 自动摘要，支持无限长度对话
+- **中英双语 i18n** —— CLI、Web、API 全链路双语支持
+- **离线部署** —— 支持 PyInstaller 打包，适用于内网环境
 
 ---
 
-## 📦 安装部署
+## 快速开始
 
 ### 环境要求
 
 - Python 3.8+
-- PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+、SQL Server 2014+ 或 GaussDB（集中式/分布式）
-- 至少一个 LLM API Key（DeepSeek / OpenAI / Claude 等）
+- 以下数据库之一：PostgreSQL 12+、MySQL 5.7+、Oracle 12c+、SQL Server 2014+、GaussDB
+- 至少一个 LLM API Key（或使用 Ollama 免费本地部署）
 
-> **GaussDB 用户注意：** GaussDB 使用 pg8000 驱动（支持 sha256 认证）。Linux（欧拉系统）也可使用华为提供的专用驱动。详见 [GaussDB 配置](#gaussdb华为) 章节。
-
-> **Oracle 用户注意：** 使用 `oracledb` Thin 模式（Oracle 官方 Python 驱动）- 无需安装 Oracle Client。支持 Oracle 12c 及以上版本（12.1、12.2、18c、19c、21c、23c）。不支持 Oracle 11g。
-
-> **SQL Server 用户注意：** 使用 `pytds` (python-tds) - 纯 Python 驱动，无需安装 ODBC。支持 SQL Server 2014 至 2022 及 Azure SQL Database。Query Store 功能需要 SQL Server 2016+。
-
-### 方式一：直接安装
+### 安装
 
 ```bash
-# 1. 克隆项目
+# 克隆
 git clone https://github.com/NoNamesJavaDog/db-agent-ai.git
-cd db-agent
+cd db-agent-ai
 
-# 2. 安装依赖
+# 安装依赖
 pip install -r requirements.txt
 
-# 3. 配置
+# 配置
 cp config/config.ini.example config/config.ini
-# 编辑 config/config.ini，填写数据库连接信息和 API Key
+# 编辑 config/config.ini 填写数据库和 LLM 凭据
 
-# 4. 启动
+# 启动 CLI
 python main.py
+
+# 或启动 Web UI + API
+PORT=8000 python -m db_agent.api.server
 ```
 
-### 方式二：使用启动脚本
-
-**Linux / macOS:**
-```bash
-chmod +x scripts/start.sh
-./scripts/start.sh
-```
-
-**Windows:**
-```cmd
-scripts\start.bat
-```
-
-### 依赖清单
-
-```
-requirements.txt
-├── pg8000           # PostgreSQL/GaussDB 驱动（支持 sha256 认证）
-├── pymysql          # MySQL 驱动
-├── oracledb         # Oracle 驱动（Thin 模式，无需客户端）
-├── python-tds       # SQL Server 驱动（纯 Python，无需 ODBC）
-├── pydantic         # 数据验证（>=2.10.0 支持 Python 3.13）
-├── openai           # OpenAI/DeepSeek API
-├── anthropic        # Claude API
-├── google-generativeai  # Gemini API
-├── rich             # 终端美化
-├── prompt-toolkit   # 命令行增强
-├── fastapi          # API 服务
-└── uvicorn          # ASGI 服务器
-```
-
-### 方式三：内网离线部署
-
-适用于无法访问外网的内网环境。
-
-#### 方案 A：打包成独立可执行文件（推荐）
-
-无需在目标机器安装 Python，直接运行 exe 文件。
-
-**在联网机器上打包：**
-```bash
-# 1. 安装 PyInstaller
-pip install pyinstaller
-
-# 2. 运行打包脚本
-scripts\build_package.bat      # Windows
-# 或
-./scripts/build_package.sh     # Linux/macOS
-```
-
-**打包输出：**
-```
-dist/db-agent/
-├── db-agent.exe          # 主程序（Windows）或 db-agent（Linux）
-├── config/
-│   └── config.ini.example
-└── ... (运行时依赖)
-```
-
-**部署到目标机器：**
-1. 将 `dist/db-agent/` 整个文件夹复制到目标机器
-2. 编辑 `config/config.ini` 配置数据库和 API Key
-3. 运行 `db-agent.exe`
-
-#### 方案 B：离线 pip 安装
-
-目标机器需要有 Python 环境，但无需联网。
-
-**在联网机器上下载依赖：**
-```bash
-scripts\download_deps.bat      # Windows
-```
-
-**打包内容：**
-```
-项目目录/
-├── vendor/               # 所有依赖的 wheel 包
-├── requirements.txt
-├── install_offline.bat   # 离线安装脚本
-└── ... (源代码)
-```
-
-**部署到目标机器：**
-1. 将整个项目文件夹复制到目标机器
-2. 确保目标机器已安装 Python 3.8+
-3. 运行 `install_offline.bat`
-4. 编辑 `config/config.ini`
-5. 运行 `python main.py`
-
----
-
-## ⚡ 快速开始
-
-### 1. 配置文件
-
-编辑 `config/config.ini`：
+### 最简配置
 
 ```ini
 [database]
-type = postgresql    # postgresql、mysql、oracle、sqlserver 或 gaussdb
+type = postgresql
 host = localhost
-port = 5432          # PostgreSQL/GaussDB 默认 5432，MySQL 默认 3306
-database = your_database
+port = 5432
+database = mydb
 user = postgres
-password = your_password
+password = secret
 
 [llm]
 default_provider = deepseek
 
 [deepseek]
-api_key = sk-your-deepseek-api-key
-model = deepseek-chat
-
-[openai]
-api_key = sk-your-openai-api-key
-model = gpt-4o
-
-[claude]
-api_key = sk-ant-your-claude-api-key
-model = claude-sonnet-4-20250514
-```
-
-### 2. 启动 CLI
-
-```bash
-python main.py
-```
-
-### 3. 开始对话
-
-```
-╭──────────────────────────────────────────╮
-│  数据库智能助手 - DeepSeek / deepseek-chat │
-╰──────────────────────────────────────────╯
-
-✓ 已连接: PostgreSQL 16.4
-
-输入 /help 查看帮助，/model 切换模型，/language 切换语言，/exit 退出
-
-De> 列出所有表
-  ● 列出表
-    ✓ 返回 12 条记录
-
-╭─────────────────────────────────────────────────────────╮
-│ 当前数据库共有 12 张表：                                  │
-│                                                         │
-│ | 表名 | 大小 |                                          │
-│ |------|------|                                          │
-│ | users | 2.5 MB |                                       │
-│ | orders | 15.8 MB |                                     │
-│ | products | 1.2 MB |                                    │
-│ | ...  | ... |                                           │
-╰─────────────────────────────────────────────────────────╯
-```
-
-### 4. 常用命令
-
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示帮助信息 |
-| `/file [路径]` | 加载SQL文件进行分析 |
-| `/migrate` | 数据库迁移向导（文件导入或在线迁移） |
-| `/sessions` | 列出所有会话 |
-| `/session new` | 创建新会话 |
-| `/session use <id/名称>` | 切换到指定会话 |
-| `/session delete <id/名称>` | 删除会话 |
-| `/session rename <名称>` | 重命名当前会话 |
-| `/connections` | 列出所有数据库连接 |
-| `/connection add` | 添加新的数据库连接 |
-| `/connection use <名称>` | 切换到指定数据库连接 |
-| `/providers` | 列出所有 AI 模型配置 |
-| `/provider add` | 添加新的 AI 模型配置 |
-| `/provider use <名称>` | 切换 AI 模型 |
-| `/model` | 快速切换 AI 模型 |
-| `/language` | 切换语言（中/英） |
-| `/reset` | 重置对话历史 |
-| `/history` | 查看对话历史 |
-| `/clear` | 清屏 |
-| `/exit` | 退出程序 |
-
-### 5. SQL 文件分析
-
-您可以加载 SQL 文件，让 AI 分析或执行：
-
-```
-De> /file C:\queries\slow_queries.sql
-
-已加载文件: slow_queries.sql (2048 字节, 约 5 条SQL语句)
-
-╭──────────────────────────────────────────╮
-│ 文件预览 - slow_queries.sql               │
-├──────────────────────────────────────────┤
-│ 1  SELECT * FROM users                   │
-│ 2  WHERE created_at > '2024-01-01'       │
-│ 3  ORDER BY id;                          │
-│ ...                                      │
-╰──────────────────────────────────────────╯
-
-文件已加载，请输入您的问题...
-
-De> 分析这些查询的性能
-
-🤖: 我来分析文件中的每条查询...
-    [显示分析结果]
-
-De> 执行第2条查询
-
-🤖: [展示SQL，等待确认]
-```
-
----
-
-## 💡 使用场景
-
-### 场景一：开发者日常查询
-
-**传统方式：** 打开数据库客户端 → 查看表结构 → 编写 SQL → 调试 → 执行
-
-**DB Agent 方式：**
-```
-👤: 查看最近7天每天的订单数量和总金额
-
-🤖: 好的，我来查询最近7天的订单统计...
-
-    | 日期 | 订单数 | 总金额 |
-    |------|--------|--------|
-    | 2024-01-20 | 156 | ¥45,230.00 |
-    | 2024-01-19 | 143 | ¥38,920.00 |
-    | ... | ... | ... |
-```
-
-### 场景二：紧急故障排查
-
-**凌晨3点，系统告警：数据库响应缓慢**
-
-```
-👤: 现在有哪些正在执行的慢查询？
-
-🤖: 发现 3 个长时间运行的查询：
-
-    1. PID: 12345 | 运行时间: 45.2秒
-       SELECT * FROM logs WHERE created_at > ...
-       ⚠️ 问题：全表扫描 logs 表（2000万行）
-
-    2. PID: 12346 | 运行时间: 23.8秒
-       UPDATE orders SET status = ...
-       ⚠️ 问题：锁等待
-
-    建议：
-    - 考虑终止 PID 12345
-    - 为 logs.created_at 添加索引
-
-👤: 帮我创建那个索引
-
-🤖: 将创建索引：
-    CREATE INDEX CONCURRENTLY idx_logs_created_at ON logs(created_at);
-
-    ⚠️ 这是一个在线创建索引操作，不会锁表，但可能需要几分钟。
-    确认执行吗？[是/否]
-```
-
-### 场景三：数据分析师提数
-
-**产品经理：我需要一份用户分析报告**
-
-```
-👤: 统计每个用户等级的用户数量、平均订单金额、最后活跃时间分布
-
-🤖: 好的，我来生成这份分析报告...
-
-    | 用户等级 | 用户数 | 平均订单金额 | 30天内活跃 | 90天内活跃 | 不活跃 |
-    |---------|--------|-------------|-----------|-----------|--------|
-    | VIP     | 1,234  | ¥892.50     | 78%       | 15%       | 7%     |
-    | 高级    | 5,678  | ¥456.30     | 65%       | 22%       | 13%    |
-    | 普通    | 23,456 | ¥123.80     | 45%       | 30%       | 25%    |
-
-    💡 洞察：
-    - VIP 用户活跃度最高，但占比仅 4%
-    - 普通用户中有 25% 已不活跃，建议进行召回营销
-```
-
-### 场景四：新项目表结构设计
-
-```
-👤: 我要做一个博客系统，帮我设计数据库表结构
-
-🤖: 好的，我为你设计以下表结构：
-
-    1. **users** - 用户表
-       - id, username, email, password_hash, avatar, created_at
-
-    2. **posts** - 文章表
-       - id, user_id, title, content, status, view_count, created_at, updated_at
-
-    3. **categories** - 分类表
-       - id, name, slug, parent_id
-
-    4. **tags** - 标签表
-       - id, name, slug
-
-    5. **post_tags** - 文章标签关联表
-       - post_id, tag_id
-
-    6. **comments** - 评论表
-       - id, post_id, user_id, content, parent_id, created_at
-
-    需要我创建这些表吗？我可以生成完整的建表语句。
-
-👤: 好的，创建吧
-
-🤖: [展示完整建表 SQL]
-    确认执行吗？[是/否]
-```
-
-### 场景五：定期维护优化
-
-```
-👤: 帮我做一次全面的数据库健康检查
-
-🤖: 正在进行全面检查...
-
-    📊 **数据库概况**
-    - 版本：PostgreSQL 16.4
-    - 数据库大小：12.5 GB
-    - 表数量：45
-    - 活跃连接：23
-
-    ⚠️ **发现的问题**
-
-    1. **死元组过多** (3个表)
-       - orders: 15% 死元组，建议 VACUUM
-       - logs: 23% 死元组，建议 VACUUM FULL
-       - sessions: 45% 死元组，紧急！
-
-    2. **未使用的索引** (5个)
-       - idx_users_old_email: 从未使用，占用 56MB
-       - idx_orders_legacy: 从未使用，占用 128MB
-       ...
-
-    3. **缺少索引** (2个查询)
-       - orders.customer_id 经常被查询但无索引
-       - products.category_id 经常被查询但无索引
-
-    4. **大表预警**
-       - logs 表已达 5GB，建议考虑分区或归档
-
-    ✅ **优化建议**
-    1. 立即执行：VACUUM ANALYZE sessions;
-    2. 计划执行：删除 5 个未使用索引，释放 280MB
-    3. 长期规划：logs 表按月分区
-
-    需要我执行这些优化操作吗？
-```
-
-### 场景六：非技术人员使用
-
-**运营同事想查数据，但不会写 SQL**
-
-```
-👤: 我想看看上周销售额最高的10个商品
-
-🤖: 好的，我来查询上周销售额 TOP 10 商品...
-
-    | 排名 | 商品名称 | 销量 | 销售额 |
-    |------|----------|------|--------|
-    | 1 | iPhone 15 Pro | 234 | ¥1,872,000 |
-    | 2 | MacBook Air M3 | 156 | ¥1,248,000 |
-    | 3 | AirPods Pro 2 | 445 | ¥889,110 |
-    | ... | ... | ... | ... |
-
-👤: 这些商品主要是哪些地区的用户购买的？
-
-🤖: 我来分析这些热销商品的购买地区分布...
-    [AI 记得上下文，自动分析这 10 个商品]
-```
-
-### 场景七：在线数据库迁移
-
-**场景：将 MySQL 数据库对象在线迁移到 PostgreSQL**
-
-使用 `/migrate` 命令进行数据库之间的在线迁移。DB Agent 会分析源数据库、创建迁移计划、并实时跟踪迁移进度。
-
-```
-# 首先，添加两个数据库连接
-De> /connection add
-[配置 MySQL 源数据库]
-
-De> /connection add
-[配置 PostgreSQL 目标数据库]
-
-# 切换到目标数据库
-De> /connection use postgres-target
-✓ 已切换到连接 [postgres-target]
-
-# 启动迁移向导
-De> /migrate
-1. 文件导入迁移 - 从 SQL 文件导入并转换
-2. 在线迁移 - 直接从源数据库迁移到目标数据库
-
-选择: 2
-
-# 选择源数据库
-可用的源数据库连接：
-| # | 名称 | 类型 | 主机 | 数据库 |
-|---|------|------|------|--------|
-| 1 | mysql-prod | MySQL | 192.168.1.100 | myapp |
-
-选择源数据库连接: 1
-
-迁移方向：
-  mysql-prod (MySQL) → postgres-target (PostgreSQL)
-
-确认开始迁移？[y/n]: y
-
-🤖 Agent: 正在分析源数据库 mysql-prod...
-
-       **源数据库分析：**
-       | 对象类型 | 数量 |
-       |----------|------|
-       | 表 | 7 |
-       | 视图 | 3 |
-       | 存储过程 | 3 |
-       | 函数 | 3 |
-       | 触发器 | 3 |
-       | 索引 | 12 |
-
-       **迁移计划：**
-       将按依赖顺序创建对象：
-       1. 表（按外键顺序）
-       2. 索引
-       3. 视图
-       4. 函数
-       5. 存储过程
-       6. 触发器
-
-       **DDL 转换预览：**
-       | MySQL | PostgreSQL |
-       |-------|------------|
-       | INT AUTO_INCREMENT | SERIAL |
-       | VARCHAR(100) | VARCHAR(100) |
-       | DATETIME | TIMESTAMP |
-       | TINYINT(1) | BOOLEAN |
-       | ENUM(...) | VARCHAR + CHECK |
-
-       准备执行 31 个迁移项，确认？[是/否]
-
-👤 用户: 是
-
-🤖 Agent: 正在执行迁移...
-       ✓ [1/31] 创建表 users
-       ✓ [2/31] 创建表 departments
-       ✓ [3/31] 创建表 employees
-       ...
-       ✓ [31/31] 创建触发器 tr_audit
-
-       **迁移完成！**
-       - 总计：31 项
-       - 成功：31
-       - 失败：0
-       - 跳过：0
-
-       **验证：**
-       正在比对源数据库和目标数据库...
-       所有对象迁移成功！
-```
-
-**支持的在线迁移路径：**
-- MySQL → PostgreSQL / GaussDB / Oracle / SQL Server
-- PostgreSQL → MySQL / GaussDB / Oracle / SQL Server
-- Oracle → PostgreSQL / MySQL / GaussDB / SQL Server
-- SQL Server → PostgreSQL / MySQL / GaussDB / Oracle
-- GaussDB → PostgreSQL / MySQL / Oracle / SQL Server
-
-### 场景八：基于文件的数据库迁移
-
-**场景：使用 DDL 文件将 Oracle 数据库对象迁移到 GaussDB**
-
-使用 `/file` 命令加载 Oracle DDL 脚本，让 AI 自动转换为目标数据库语法并执行。
-
-```
-# 已连接 GaussDB
-[database]
-type = gaussdb
-...
-
-# 在 CLI 中加载 Oracle DDL 文件
-De> /file C:\migration\oracle_schema.sql
-
-✓ 已加载文件: oracle_schema.sql (15360 字节, 约 23 条SQL语句)
-
-╭──────────────────────────────────────────────────╮
-│ 文件预览 - oracle_schema.sql                      │
-├──────────────────────────────────────────────────┤
-│ 1  -- Oracle DDL Script                          │
-│ 2  CREATE TABLE employees (                       │
-│ 3      emp_id NUMBER(10) PRIMARY KEY,            │
-│ 4      emp_name VARCHAR2(100) NOT NULL,          │
-│ 5      hire_date DATE DEFAULT SYSDATE,           │
-│ 6      salary NUMBER(12,2),                      │
-│ 7      dept_id NUMBER(10) REFERENCES departments │
-│ 8  );                                            │
-│ 9                                                │
-│ 10 CREATE SEQUENCE emp_seq START WITH 1;         │
-│ ...                                              │
-╰──────────────────────────────────────────────────╯
-
-De> 把这些 Oracle DDL 语句转换成 GaussDB 语法并执行
-
-🤖: 我来分析 Oracle DDL 并转换为 GaussDB 兼容语法：
-
-    **转换摘要：**
-
-    | Oracle 语法 | GaussDB 等效语法 |
-    |------------|-----------------|
-    | NUMBER(10) | INTEGER |
-    | NUMBER(12,2) | DECIMAL(12,2) |
-    | VARCHAR2(100) | VARCHAR(100) |
-    | SYSDATE | CURRENT_DATE |
-    | CREATE SEQUENCE | CREATE SEQUENCE (兼容) |
-
-    **转换后的 DDL：**
-
-    ```sql
-    CREATE TABLE employees (
-        emp_id INTEGER PRIMARY KEY,
-        emp_name VARCHAR(100) NOT NULL,
-        hire_date DATE DEFAULT CURRENT_DATE,
-        salary DECIMAL(12,2),
-        dept_id INTEGER REFERENCES departments
-    );
-
-    CREATE SEQUENCE emp_seq START WITH 1;
-    ```
-
-    准备执行 23 条转换后的语句，确认执行吗？[是/否]
-
-👤: 是
-
-🤖: 成功创建 23 个对象：
-    - 15 个表
-    - 5 个序列
-    - 3 个索引
-
-    迁移完成！
-```
-
-**支持的迁移路径：**
-- **Oracle → GaussDB**（优化支持，内置详细转换规则）
-- Oracle → PostgreSQL / MySQL / SQL Server
-- MySQL → PostgreSQL / GaussDB / Oracle / SQL Server
-- PostgreSQL → MySQL / GaussDB / Oracle / SQL Server
-- SQL Server → PostgreSQL / MySQL / GaussDB / Oracle
-
-### Oracle → GaussDB 核心转换规则
-
-DB Agent 针对 Oracle 到 GaussDB 的迁移内置了详细的转换规则：
-
-| 类别 | Oracle | GaussDB | 说明 |
-|------|--------|---------|------|
-| **高级包** | DBMS_LOB | DBE_LOB | 不支持 CLOB2FILE |
-| | DBMS_OUTPUT | DBE_OUTPUT | 接口由存储过程变为函数 |
-| | DBMS_RANDOM | DBE_RANDOM | SEED→SET_SEED, VALUE→GET_VALUE |
-| | UTL_RAW | DBE_RAW | 函数名更明确 |
-| | DBMS_SQL | DBE_SQL | OPEN_CURSOR→REGISTER_CONTEXT |
-| **数据类型** | NUMBER(p,-s) | 不支持 | 需手动 ROUND/TRUNC |
-| | VARCHAR2(n CHAR) | VARCHAR2(n*4) | 仅支持 BYTE 单位 |
-| | DATE | TIMESTAMP(0) | 注意精度丢失 |
-| **SQL语法** | ! = | != | 禁止空格，否则 ! 被识别为阶乘 |
-| | CONNECT BY | WITH RECURSIVE | 复杂层次查询改写 |
-| | ROWNUM | ROW_NUMBER() | 避免在 JOIN ON 中使用 |
-| **函数** | ROUND(NULL,...) | 报错 | Oracle 返回 NULL |
-| | '.' (正则) | 匹配换行 | Oracle 默认不匹配换行 |
-| | LOWER/UPPER(日期) | 格式不同 | 建议先 TO_CHAR |
-
----
-
-## ⚙️ 配置说明
-
-### 数据库配置
-
-**PostgreSQL:**
-```ini
-[database]
-type = postgresql     # 数据库类型
-host = localhost      # 数据库主机
-port = 5432          # PostgreSQL 默认端口
-database = mydb      # 数据库名
-user = postgres      # 用户名
-password = secret    # 密码
-```
-
-**MySQL:**
-```ini
-[database]
-type = mysql         # 数据库类型
-host = localhost     # 数据库主机
-port = 3306          # MySQL 默认端口
-database = mydb      # 数据库名
-user = root          # 用户名
-password = secret    # 密码
-```
-
-**Oracle:**
-```ini
-[database]
-type = oracle        # 数据库类型
-host = localhost     # 数据库主机
-port = 1521          # Oracle 默认端口
-database = ORCL      # Service Name 或 SID
-user = system        # 用户名
-password = oracle    # 密码
-```
-
-> **Oracle 驱动说明**
->
-> 使用 `oracledb` Thin 模式（Oracle 官方 Python 驱动）：
-> ```bash
-> pip install oracledb
-> ```
->
-> **特性：**
-> - 纯 Python 实现 - 无需安装 Oracle Client
-> - 支持 Oracle 12c 及以上版本（12.1、12.2、18c、19c、21c、23c）
-> - 不支持 Oracle 11g（需要安装 Oracle Client）
->
-> **支持的功能：**
-> - 完整的表列表和模式探索
-> - 通过 V$SQL 分析慢查询
-> - 通过 DBMS_XPLAN 分析执行计划
-> - 索引使用分析
-> - 在线索引创建（ONLINE 关键字）
-> - 通过 DBMS_STATS 收集统计信息
->
-> **权限说明：**
-> - 建议使用 DBA 权限以获得完整功能
-> - 无 DBA 权限时，工具会自动降级使用 ALL_* 视图代替 DBA_* 视图
-
-**SQL Server:**
-```ini
-[database]
-type = sqlserver     # 数据库类型
-host = localhost     # 数据库主机
-port = 1433          # SQL Server 默认端口
-database = mydb      # 数据库名
-user = sa            # 用户名
-password = secret    # 密码
-```
-
-> **SQL Server 驱动说明**
->
-> 使用 `pytds` (python-tds) - 纯 Python TDS 协议实现：
-> ```bash
-> pip install python-tds
-> ```
->
-> **特性：**
-> - 纯 Python 实现 - 无需安装 ODBC 驱动
-> - 支持 SQL Server 2014、2016、2017、2019、2022 及 Azure SQL Database
-> - 支持 MARS（多活动结果集）和现代日期类型
->
-> **版本特定功能：**
-> - SQL Server 2014 (12.x)：基础支持
-> - SQL Server 2016 (13.x)+：Query Store 历史查询分析
-> - SQL Server 2022 (16.x)：新权限模型 (VIEW SERVER PERFORMANCE STATE)
-> - Azure SQL Database：完整支持，使用 VIEW DATABASE STATE
->
-> **支持的功能：**
-> - 完整的表列表和模式探索
-> - 通过 sys.dm_exec_query_stats 或 Query Store 进行慢查询分析
-> - 通过 SHOWPLAN_XML 进行执行计划分析
-> - 通过 sys.dm_db_index_usage_stats 进行索引使用分析
-> - 在线索引创建 (WITH ONLINE = ON，仅企业版)
-> - 通过 UPDATE STATISTICS 更新统计信息
->
-> **权限说明：**
-> - VIEW SERVER STATE（2019及以前）或 VIEW SERVER PERFORMANCE STATE（2022+）用于 DMV 访问
-> - SHOWPLAN 权限用于执行计划分析
-
-**GaussDB（华为）:**
-```ini
-[database]
-type = gaussdb       # 数据库类型
-host = localhost     # 数据库主机
-port = 5432          # GaussDB 默认端口（与 PostgreSQL 相同）
-database = postgres  # 数据库名
-user = gaussdb       # 用户名
-password = secret    # 密码
-```
-
-> **GaussDB 驱动安装说明**
->
-> **默认方式（所有平台）：** 使用 pg8000 驱动，支持 sha256 认证（已包含在 requirements.txt 中）：
-> ```bash
-> pip install pg8000
-> ```
->
-> **Linux（欧拉系统）备选方案：** 也可使用华为提供的专用驱动：
-> ```bash
-> # 1. 解压驱动包（由华为提供）
-> tar -zxvf GaussDB-Kernel-V500R002C10-EULER-64bit-Python.tar.gz
->
-> # 2. 复制 psycopg2 到 Python site-packages
-> cp -r psycopg2 /usr/lib/python3.x/site-packages/
->
-> # 3. 设置权限
-> chmod 755 /usr/lib/python3.x/site-packages/psycopg2
->
-> # 4. 配置环境变量
-> export LD_LIBRARY_PATH=/path/to/gaussdb/lib:$LD_LIBRARY_PATH
-> export PYTHONPATH=/path/to/gaussdb:$PYTHONPATH
-> ```
->
-> **支持的模式：**
-> - **集中式模式**：单节点或高可用集群，适合 OLTP 场景。使用 `PG_STAT_ACTIVITY` 进行监控。
-> - **分布式模式**：MPP 架构多节点，适合 OLAP 场景。使用 `PGXC_STAT_ACTIVITY` 进行跨节点监控。
->
-> 系统会根据 `pgxc_node` 系统表自动检测运行模式。
-
-### LLM 提供商配置
-
-支持的提供商及配置方式：
-
-#### DeepSeek（推荐，性价比高）
-```ini
-[deepseek]
-api_key = sk-your-api-key
+api_key = sk-your-key
 model = deepseek-chat
 ```
 
-#### OpenAI / ChatGPT
-```ini
-[openai]
-api_key = sk-your-api-key
-model = gpt-4o
-```
+---
 
-#### Anthropic Claude
-```ini
-[claude]
-api_key = sk-ant-your-api-key
-model = claude-sonnet-4-20250514
-```
+## LLM 模型支持
 
-#### Google Gemini
-```ini
-[gemini]
-api_key = your-api-key
-model = gemini-pro
-```
+| 厂商 | 默认模型 | 成本 | 适用场景 |
+|---|---|---|---|
+| **DeepSeek** | deepseek-chat | 低 | 性价比之王，SQL 理解力强 |
+| **OpenAI** | gpt-4o | 中 | 知识面广，工具调用稳定 |
+| **Claude** | claude-sonnet-4-20250514 | 中 | 复杂推理，详细解释 |
+| **Gemini** | gemini-2.0-flash | 低 | 响应快速，多模态 |
+| **通义千问** | qwen-turbo | 低 | 中文理解力强 |
+| **Ollama** | llama2 | 免费 | 隐私优先，离线部署 |
 
-#### 阿里云通义千问
-```ini
-[qwen]
-api_key = your-api-key
-model = qwen-turbo
-```
-
-#### Ollama（本地部署，免费）
-```ini
-[ollama]
-api_key = ollama
-model = llama2
-base_url = http://localhost:11434/v1
-```
+通过 CLI (`/model`)、Web UI 或 API 随时切换模型。
 
 ---
 
-## 🌐 API 服务
+## 数据库驱动说明
 
-DB Agent 提供 RESTful API，方便集成到其他系统。
-
-### 启动 API 服务
-
-```bash
-python -m db_agent.api.server
-# 或指定端口
-PORT=8080 python -m db_agent.api.server
-```
-
-### API 端点
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/v1/sessions` | 创建会话 |
-| POST | `/api/v1/chat` | 发送消息 |
-| GET | `/api/v1/sessions` | 列出会话 |
-| GET | `/api/v1/sessions/{id}/history` | 获取历史 |
-| DELETE | `/api/v1/sessions/{id}` | 删除会话 |
-| POST | `/api/v1/sessions/{id}/reset` | 重置会话 |
-| GET | `/api/v1/health` | 健康检查 |
-
-### 使用示例
-
-```python
-import requests
-
-BASE_URL = "http://localhost:8000"
-
-# 1. 创建会话
-resp = requests.post(f"{BASE_URL}/api/v1/sessions", json={
-    "config": {
-        "db_type": "postgresql",  # 或 "mysql" 或 "gaussdb"
-        "db_host": "localhost",
-        "db_port": 5432,          # PostgreSQL/GaussDB 5432，MySQL 3306
-        "db_name": "mydb",
-        "db_user": "postgres",
-        "db_password": "secret"
-    }
-})
-session_id = resp.json()["session_id"]
-print(f"会话ID: {session_id}")
-
-# 2. 发送消息
-resp = requests.post(f"{BASE_URL}/api/v1/chat", json={
-    "session_id": session_id,
-    "message": "列出所有表"
-})
-print(resp.json()["response"])
-
-# 3. 继续对话（AI 会记住上下文）
-resp = requests.post(f"{BASE_URL}/api/v1/chat", json={
-    "session_id": session_id,
-    "message": "第一个表有多少条数据？"
-})
-print(resp.json()["response"])
-
-# 4. 删除会话
-requests.delete(f"{BASE_URL}/api/v1/sessions/{session_id}")
-```
-
-### API 文档
-
-启动服务后访问：
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+| 数据库 | 驱动 | 安装 | 说明 |
+|---|---|---|---|
+| PostgreSQL | pg8000 | 已包含 | 纯 Python，无外部依赖 |
+| MySQL | pymysql | 已包含 | 纯 Python |
+| Oracle | oracledb | `pip install oracledb` | Thin 模式，无需 Oracle Client。仅支持 12c+ |
+| SQL Server | pytds | `pip install python-tds` | 纯 Python，无需 ODBC。支持 2014+ 和 Azure SQL |
+| GaussDB | pg8000 | 已包含 | 支持 SHA256 认证。自动检测集中式/分布式模式 |
 
 ---
 
-## 🔒 安全机制
+## 20+ 内置工具
 
-### 1. 操作确认机制
+### 数据与结构工具
+| 工具 | 说明 |
+|---|---|
+| `list_tables` | 列出所有表及大小 |
+| `describe_table` | 列定义、约束、索引 |
+| `get_sample_data` | 预览表数据 |
+| `execute_sql` | 执行任意 SQL（需确认） |
+| `execute_safe_query` | 执行只读查询（无需确认） |
+| `list_databases` | 列出服务器上所有数据库 |
+| `switch_database` | 切换到同实例的另一个数据库 |
 
-所有危险操作（INSERT / UPDATE / DELETE / DROP / CREATE 等）都需要用户二次确认：
-
-```
-🤖: 即将执行以下 SQL：
-
-    DELETE FROM users WHERE status = 'inactive';
-
-    ⚠️ 此操作将影响 1,234 行数据
-    确认执行吗？[是/否]
-```
-
-### 2. 只读查询保护
-
-`execute_safe_query` 工具允许只读语句无需确认直接执行：
-
-```python
-# 只读语句直接执行
-result = db_tools.execute_safe_query("SELECT * FROM users")      # ✅
-result = db_tools.execute_safe_query("SHOW TABLES")              # ✅ (MySQL)
-result = db_tools.execute_safe_query("DESCRIBE users")           # ✅ (MySQL)
-result = db_tools.execute_safe_query("EXPLAIN SELECT * FROM t")  # ✅
-result = db_tools.execute_safe_query("DELETE FROM users")        # ❌ 被拒绝
-```
-
-**支持的只读语句：**
-- `SELECT` - 数据查询
-- `SHOW` - 查看数据库对象 (MySQL)
-- `DESCRIBE` / `DESC` - 查看表结构 (MySQL)
-- `EXPLAIN` - 查看执行计划
-
-### 3. 索引创建保护
-
-默认使用在线 DDL 创建索引，最小化锁表：
-
-**PostgreSQL:**
-```sql
--- Agent 自动转换为：
-CREATE INDEX CONCURRENTLY idx_name ON table(column);
-```
-
-**MySQL (5.6+):**
-```sql
--- Agent 自动转换为：
-ALTER TABLE table ADD INDEX idx_name (column), ALGORITHM=INPLACE, LOCK=NONE;
-```
-
-### 4. 数据库版本感知
-
-Agent 自动检测数据库版本，生成兼容的 SQL：
-
-```
-🤖: 检测到 PostgreSQL 16.4
-    将使用兼容此版本的 SQL 语法
-```
-
-### 5. 智能错误恢复
-
-当 SQL 执行失败时，Agent 会自动分析错误原因，调整策略后重试：
-
-```
-👤: 往 users 表插入测试数据
-
-🤖: 好的，我来插入 100 条测试记录...
-    [展示 INSERT SQL，等待确认]
-
-👤: 是
-
-🤖: 错误：Duplicate entry 'user001' for key 'users.username'
-
-    检测到重复键错误，我来调整策略处理已存在的记录...
-
-    [展示修改后的 SQL（使用 INSERT IGNORE），等待确认]
-
-👤: 是
-
-🤖: 成功插入 95 条新记录（跳过 5 条重复数据）。
-    继续执行下一步...
-```
-
-**错误恢复策略：**
-- **重复键错误** - 使用 `INSERT IGNORE` 或 `ON DUPLICATE KEY UPDATE`
-- **约束违反** - 分析并修正数据，使用修正后的 SQL 重试
-- **语法错误** - 修正 SQL 语法后重试
-- **表/列不存在** - 先确认结构，再调整查询
-
----
-
-## ❓ 常见问题
-
-### Q: 支持哪些数据库？
-**A:** 目前支持 PostgreSQL 12+、MySQL 5.7/8.0、Oracle 12c+、SQL Server 2014+（包括 Azure SQL）和 GaussDB（集中式和分布式模式）。
-
-### Q: 会不会误操作删除数据？
-**A:** 不会。所有 INSERT/UPDATE/DELETE/DROP 等危险操作都需要二次确认，你可以预览将要执行的 SQL 后再决定是否执行。
-
-### Q: API Key 安全吗？
-**A:** API Key 存储在本地配置文件中，不会上传到任何服务器。建议设置适当的文件权限保护配置文件。
-
-### Q: 可以连接远程数据库吗？
-**A:** 可以。在配置文件中填写远程数据库的地址和凭据即可。请确保网络可达且防火墙允许连接。
-
-### Q: 支持多数据库切换吗？
-**A:** 支持！你可以管理多个数据库连接，并在运行时自由切换：
-```
-/connection add           # 添加新连接
-/connections              # 列出所有连接
-/connection use <名称>    # 切换到其他数据库
-```
-
-### Q: 对话历史会保存吗？
-**A:** 会的，所有对话都会自动保存到本地 SQLite 数据库中。你可以：
-- 使用 `/session use <名称>` 继续之前的会话
-- 使用 `/sessions` 查看所有会话
-- 使用 `/session new` 创建新会话
-- 重启程序后对话历史仍然保留
-
-### Q: 如何处理大结果集？
-**A:** Agent 会自动限制返回的数据量。如需查看更多数据，可以明确告诉 Agent 你需要多少条记录。
-
-### Q: pg_stat_statements 未启用怎么办？（PostgreSQL）
-**A:** 不影响使用。Agent 会自动降级使用 `pg_stat_activity` 来查看当前查询。如需历史慢查询分析，请启用 pg_stat_statements：
-
-```sql
--- postgresql.conf
-shared_preload_libraries = 'pg_stat_statements'
-
--- 重启后执行
-CREATE EXTENSION pg_stat_statements;
-```
-
-### Q: performance_schema 未启用怎么办？（MySQL）
-**A:** 不影响基本使用。Agent 会自动降级使用 `information_schema.PROCESSLIST` 来查看当前查询。如需详细的慢查询分析，请在 MySQL 配置中启用 performance_schema：
-
-```ini
-# my.cnf
-[mysqld]
-performance_schema = ON
-```
-
-### Q: 使用哪个 LLM 模型效果最好？
-**A:** 推荐：
-- **性价比首选**: DeepSeek（便宜且效果好）
-- **效果最佳**: Claude Sonnet 或 GPT-4o
-- **免费方案**: Ollama 本地部署 Llama2
-
----
-
-## 🛠 Agent 工具集
-
-Agent 可自动调用以下数据库工具：
-
-### 查询与操作工具
-
-| 工具 | 说明 | 用途 |
-|------|------|------|
-| `list_tables` | 列出所有表 | 了解数据库结构 |
-| `describe_table` | 查看表结构 | 了解字段信息 |
-| `get_sample_data` | 获取示例数据 | 了解数据格式 |
-| `execute_sql` | 执行任意 SQL | 增删改查操作 |
-| `execute_safe_query` | 执行只读查询 | 安全查询数据 |
-
-### 性能工具
-
-| 工具 | 说明 | 用途 |
-|------|------|------|
-| `run_explain` | 分析执行计划 | 性能诊断 |
-| `check_index_usage` | 检查索引使用 | 索引优化 |
-| `get_table_stats` | 获取表统计 | 健康检查 |
-| `create_index` | 创建索引 | 性能优化 |
-| `analyze_table` | 更新统计信息 | 维护优化 |
-| `identify_slow_queries` | 识别慢查询 | 性能诊断 |
-| `get_running_queries` | 查看运行中查询 | 实时监控 |
+### 性能与优化工具
+| 工具 | 说明 |
+|---|---|
+| `run_explain` | 分析执行计划（支持 ANALYZE） |
+| `identify_slow_queries` | 按耗时阈值查找慢查询 |
+| `get_running_queries` | 显示当前正在执行的查询 |
+| `check_index_usage` | 分析索引利用率 |
+| `get_table_stats` | 表统计信息、膨胀、死元组 |
+| `create_index` | 创建索引（支持在线模式） |
+| `analyze_table` | 更新表统计信息 |
 
 ### 迁移工具
+| 工具 | 说明 |
+|---|---|
+| `analyze_source_database` | 扫描源库对象 |
+| `create_migration_plan` | 生成 DDL 转换计划 |
+| `execute_migration_batch` | 批量执行迁移项 |
+| `compare_databases` | 验证源库/目标库一致性 |
+| `generate_migration_report` | 生成详细迁移报告 |
+| `request_migration_setup` | 触发迁移配置 UI |
 
-| 工具 | 说明 | 用途 |
-|------|------|------|
-| `analyze_source_database` | 分析源数据库对象 | 迁移规划 |
-| `create_migration_plan` | 创建迁移计划并转换DDL | 迁移准备 |
-| `execute_migration_batch` | 批量执行迁移项 | 迁移执行 |
-| `compare_databases` | 比对源库和目标库 | 迁移验证 |
-| `generate_migration_report` | 生成迁移报告 | 迁移文档 |
-| `get_migration_status` | 获取迁移进度 | 进度跟踪 |
+### 交互工具
+| 工具 | 说明 |
+|---|---|
+| `request_user_input` | 显示动态内联表单收集结构化数据 |
+
+### 通过 MCP 和 Skills 扩展
+MCP 服务器工具和技能工具自动加入智能体工具箱。
 
 ---
 
-## 📄 开源协议
+## CLI 命令
 
-本项目采用 MIT 协议开源。
+| 命令 | 说明 |
+|---|---|
+| `/help` | 显示帮助 |
+| `/connections` | 列出数据库连接 |
+| `/connection add` | 添加新连接 |
+| `/connection use <名称>` | 切换数据库 |
+| `/providers` | 列出 LLM 模型 |
+| `/provider add` | 添加新模型 |
+| `/model` | 快速切换模型 |
+| `/sessions` | 列出会话 |
+| `/session new` | 新建会话 |
+| `/session use <id>` | 切换会话 |
+| `/migrate` | 迁移向导（文件或在线） |
+| `/file <路径>` | 加载 SQL 文件 |
+| `/mcp list` | 列出 MCP 服务器 |
+| `/mcp add` | 添加 MCP 服务器 |
+| `/mcp tools` | 显示 MCP 工具 |
+| `/skills` | 列出可用技能 |
+| `/<技能名>` | 调用技能 |
+| `/language` | 切换中/英文 |
+| `/reset` | 重置对话 |
+| `/exit` | 退出 |
 
 ---
 
-## 🤝 贡献指南
+## API 参考
+
+### V2 API 端点
+
+| 分类 | 方法 | 路径 | 说明 |
+|---|---|---|---|
+| **对话** | POST | `/api/v2/chat/{id}/message` | SSE 流式对话 |
+| | POST | `/api/v2/chat/{id}/confirm` | 确认待执行 SQL |
+| | POST | `/api/v2/chat/{id}/confirm-all` | 确认全部 |
+| | POST | `/api/v2/chat/{id}/skip-all` | 跳过全部 |
+| | POST | `/api/v2/chat/{id}/submit-form` | 提交内联表单数据 |
+| | POST | `/api/v2/chat/{id}/interrupt` | 中断 AI |
+| | POST | `/api/v2/chat/{id}/upload` | 上传 SQL 文件 |
+| | POST | `/api/v2/chat/{id}/start-migration` | 启动迁移 |
+| **连接** | GET/POST | `/api/v2/connections` | 列出/创建 |
+| | GET/PUT/DELETE | `/api/v2/connections/{id}` | 查看/更新/删除 |
+| | POST | `/api/v2/connections/{id}/test` | 测试连接 |
+| **模型** | GET/POST | `/api/v2/providers` | 列出/创建 |
+| | GET/PUT/DELETE | `/api/v2/providers/{id}` | 查看/更新/删除 |
+| **会话** | GET/POST | `/api/v2/sessions` | 列出/创建 |
+| | GET/DELETE | `/api/v2/sessions/{id}` | 查看/删除 |
+| | GET | `/api/v2/sessions/{id}/messages` | 获取历史 |
+| **MCP** | GET/POST | `/api/v2/mcp/servers` | 列出/添加服务器 |
+| | DELETE | `/api/v2/mcp/servers/{name}` | 移除服务器 |
+| | GET | `/api/v2/mcp/tools` | 列出所有工具 |
+| **技能** | GET | `/api/v2/skills` | 列出技能 |
+| | GET | `/api/v2/skills/{name}` | 技能详情 |
+| **迁移** | GET | `/api/v2/migration/tasks` | 列出任务 |
+| | GET | `/api/v2/migration/tasks/{id}` | 任务详情 |
+| **设置** | GET/PUT | `/api/v2/settings` | 获取/更新设置 |
+| **审计** | GET | `/api/v2/audit/logs` | 查询审计日志 |
+| **健康** | GET | `/api/v2/health` | 服务健康检查 |
+
+启动服务后访问 `http://localhost:8000/docs` 查看完整 Swagger 文档。
+
+---
+
+## SSE 事件协议
+
+对话端点通过 Server-Sent Events 流式返回：
+
+| 事件 | 数据 | 说明 |
+|---|---|---|
+| `tool_call` | `{name, input}` | 工具开始执行 |
+| `tool_result` | `{name, status, summary}` | 工具执行完成 |
+| `text_delta` | `{content}` | AI 文本增量 |
+| `pending` | `{index, type, sql}` | SQL 等待用户确认 |
+| `form_input` | `{title, description, fields}` | 内联表单请求 |
+| `migration_setup` | `{reason, suggested_*}` | 迁移配置请求 |
+| `migration_progress` | `{task_id, total, completed, ...}` | 迁移进度更新 |
+| `done` | `{has_pending, pending_count}` | 流结束 |
+| `error` | `{message}` | 错误发生 |
+
+---
+
+## 项目结构
+
+```
+db-agent-ai/
+├── db_agent/
+│   ├── core/                           # 核心 AI 引擎
+│   │   ├── agent.py                    # SQLTuningAgent — 大脑
+│   │   ├── tool_registry.py            # 20+ 工具定义（含 i18n）
+│   │   ├── prompt_builder.py           # 动态系统提示词构建
+│   │   ├── migration_handler.py        # 跨库迁移引擎
+│   │   ├── migration_rules.py          # DDL 转换规则（Oracle→GaussDB 等）
+│   │   ├── context_compression.py      # 长对话自动摘要
+│   │   ├── token_counter.py            # 模型感知 Token 计算
+│   │   └── database/                   # 数据库抽象层
+│   │       ├── base.py                 # 抽象接口
+│   │       ├── postgresql.py           # PostgreSQL 实现
+│   │       ├── mysql.py                # MySQL 实现
+│   │       ├── oracle.py               # Oracle 实现
+│   │       ├── sqlserver.py            # SQL Server 实现
+│   │       ├── gaussdb.py              # GaussDB 实现
+│   │       └── factory.py              # 数据库工厂
+│   ├── llm/                            # LLM 层
+│   │   ├── base.py                     # 抽象 LLM 客户端
+│   │   ├── openai_compatible.py        # OpenAI / DeepSeek / 千问 / Ollama
+│   │   ├── claude.py                   # Anthropic Claude
+│   │   ├── gemini.py                   # Google Gemini
+│   │   └── factory.py                  # LLM 工厂
+│   ├── api/                            # REST API 层
+│   │   ├── server.py                   # FastAPI 应用
+│   │   └── v2/                         # V2 API
+│   │       ├── app.py                  # 路由配置
+│   │       ├── models.py               # Pydantic 模型
+│   │       ├── deps.py                 # 依赖注入
+│   │       └── routes/                 # 端点模块
+│   │           ├── chat.py             # SSE 流式对话
+│   │           ├── connections.py      # 连接 CRUD
+│   │           ├── providers.py        # 模型 CRUD
+│   │           ├── sessions.py         # 会话管理
+│   │           ├── mcp.py              # MCP 管理
+│   │           ├── skills.py           # 技能管理
+│   │           ├── migration.py        # 迁移管理
+│   │           ├── settings.py         # 设置
+│   │           ├── audit.py            # 审计日志
+│   │           └── health.py           # 健康检查
+│   ├── cli/                            # 交互式 CLI
+│   │   ├── app.py                      # CLI 主程序
+│   │   ├── ui.py                       # UI 工具
+│   │   ├── config.py                   # 配置管理
+│   │   └── commands/                   # 命令模块
+│   │       ├── connections.py          # 连接命令
+│   │       ├── providers.py            # 模型命令
+│   │       ├── sessions.py             # 会话命令
+│   │       ├── mcp.py                  # MCP 命令
+│   │       ├── skills.py              # 技能命令
+│   │       └── migration.py            # 迁移命令
+│   ├── mcp/                            # MCP 集成
+│   │   ├── client.py                   # MCP 客户端
+│   │   ├── manager.py                  # 多服务器管理
+│   │   ├── server.py                   # 作为 MCP 服务器暴露
+│   │   └── errors.py                   # 错误定义
+│   ├── skills/                         # Skills 技能系统
+│   │   ├── models.py                   # 技能数据模型
+│   │   ├── parser.py                   # SKILL.md 解析器
+│   │   ├── loader.py                   # 文件系统加载
+│   │   ├── registry.py                 # 技能注册中心
+│   │   └── executor.py                 # 技能执行器
+│   ├── storage/                        # 数据持久化
+│   │   ├── sqlite_storage.py           # SQLite 存储引擎
+│   │   ├── models.py                   # 数据模型
+│   │   ├── audit.py                    # 审计服务
+│   │   └── encryption.py              # 密码加密
+│   └── i18n/                           # 国际化
+│       └── translations.py             # 中英文翻译
+├── web/                                # React Web UI
+│   └── src/
+│       ├── pages/                      # 8 个页面组件
+│       ├── components/chat/            # 聊天 UI 组件
+│       ├── stores/                     # Zustand 状态管理
+│       ├── hooks/                      # 自定义 Hooks（SSE 等）
+│       ├── api/                        # API 客户端层
+│       ├── i18n/                       # 前端翻译
+│       └── types/                      # TypeScript 类型定义
+├── .claude/skills/                     # 8 个内置技能
+├── scripts/                            # 构建和部署脚本
+├── main.py                             # CLI 入口
+└── requirements.txt                    # Python 依赖
+```
+
+---
+
+## 部署方式
+
+### 开发环境
+```bash
+python main.py                              # CLI 模式
+PORT=8000 python -m db_agent.api.server     # Web + API 模式
+```
+
+### 生产环境（独立可执行文件）
+```bash
+pip install pyinstaller
+scripts/build_package.sh    # 或 Windows 用 .bat
+# 输出：dist/db-agent/ — 复制到目标机器，无需 Python
+```
+
+### 离线部署（内网）
+```bash
+scripts/download_deps.bat   # 下载所有 wheel 包
+# 复制到目标机器 → install_offline.bat → 运行
+```
+
+### 作为 MCP 服务器（Claude Desktop）
+```json
+{
+  "mcpServers": {
+    "db-agent": {
+      "command": "/path/to/venv/bin/python",
+      "args": ["-m", "db_agent.mcp.server", "--use-active"],
+      "env": { "DB_PASSWORD": "secret" }
+    }
+  }
+}
+```
+
+---
+
+## 安全机制
+
+- **写操作确认** —— 所有非 SELECT 操作需用户明确同意
+- **性能预检** —— 检测并预警潜在高耗查询
+- **凭据加密** —— 数据库密码和 API Key 在 SQLite 中加密存储
+- **只读快速通道** —— SELECT / SHOW / DESCRIBE / EXPLAIN 无需确认
+- **在线 DDL** —— 索引创建使用 online 模式避免锁表
+- **全链路审计** —— 每个操作记录会话、时间戳和结果
+- **数据不外泄** —— API Key 仅存本地，绝不发送给第三方
+
+---
+
+## 常见问题
+
+**Q: 会不会误删数据？**
+A: 不会。所有 INSERT/UPDATE/DELETE/DROP 操作都需确认，你能看到完整 SQL 再决定执行。
+
+**Q: 能不能离线使用？**
+A: 可以 —— LLM 用 Ollama 本地模型，部署用独立可执行文件。
+
+**Q: 支持同时管理多个数据库吗？**
+A: 支持。通过 CLI 或 Web UI 添加多个连接，对话中随时切换 `/connection use <名称>` 或用 `switch_database` 工具。
+
+**Q: 长对话怎么处理？**
+A: 自动上下文压缩。当对话接近模型 token 限制时，自动摘要旧消息释放空间，同时保留重要上下文。
+
+**Q: 用哪个 LLM 效果最好？**
+A: DeepSeek 性价比最高。Claude 和 GPT-4o 质量最好。Ollama 免费离线部署。
+
+**Q: 能自定义扩展吗？**
+A: 能 —— 通过 MCP 服务器（任何 MCP 兼容工具服务）或 Skills（SKILL.md 自定义指令文件）。
+
+---
+
+## 贡献
 
 欢迎提交 Issue 和 Pull Request！
 
 1. Fork 本仓库
 2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 提交 Pull Request
+3. 提交更改
+4. Push 并发起 Pull Request
 
 ---
 
-## 📮 联系我们
+## 开源协议
 
-- 提交 Issue: [GitHub Issues](https://github.com/NoNamesJavaDog/db-agent-ai/issues)
+MIT License — 详见 [LICENSE](LICENSE)
+
+---
+
+## 联系
+
+- Issue: [GitHub Issues](https://github.com/NoNamesJavaDog/db-agent-ai/issues)
 - 邮箱: 1057135186@qq.com
 
 ---
 
-<p align="center">
-  <b>🚀 让每个人都能轻松管理数据库，让 DBA 去做更有价值的事</b><br><br>
-  <sub>Built with ❤️ by DB Agent Team</sub>
-</p>
+<div align="center">
+  <b>别写 SQL 了，直接跟数据库说话。</b>
+  <br><br>
+  <sub>Built with care by the DB Agent Team</sub>
+</div>

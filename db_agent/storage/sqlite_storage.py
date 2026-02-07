@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from .models import DatabaseConnection, LLMProvider, Preference, Session, ChatMessage, MigrationTask, MigrationItem
+from .models import DatabaseConnection, LLMProvider, Preference, Session, ChatMessage, MigrationTask, MigrationItem, MCPServer, AuditLog
 from .encryption import encrypt, decrypt
 
 
@@ -180,6 +180,43 @@ class SQLiteStorage:
                 )
             ''')
 
+            # MCP servers table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS mcp_servers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    command TEXT NOT NULL,
+                    args TEXT NOT NULL DEFAULT '[]',
+                    env TEXT,
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Audit logs table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER,
+                    connection_id INTEGER,
+                    category TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    target_type TEXT,
+                    target_name TEXT,
+                    sql_text TEXT,
+                    parameters TEXT,
+                    result_status TEXT NOT NULL,
+                    result_summary TEXT,
+                    affected_rows INTEGER,
+                    execution_time_ms INTEGER,
+                    user_confirmed INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+                    FOREIGN KEY (connection_id) REFERENCES database_connections(id) ON DELETE SET NULL
+                )
+            ''')
+
             # Indexes
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id
@@ -204,6 +241,28 @@ class SQLiteStorage:
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_migration_items_status
                 ON migration_items(status)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled
+                ON mcp_servers(enabled)
+            ''')
+
+            # Audit logs indexes
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_audit_logs_session
+                ON audit_logs(session_id)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_audit_logs_category
+                ON audit_logs(category)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
+                ON audit_logs(created_at)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_audit_logs_action
+                ON audit_logs(action)
             ''')
 
             conn.commit()
@@ -431,6 +490,41 @@ class SQLiteStorage:
             created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
             updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None
         )
+
+    def find_connection_for_instance_db(self, db_type: str, host: str, port: int,
+                                        username: str, database: str) -> Optional[DatabaseConnection]:
+        """Find an existing connection for the same instance and database."""
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                '''SELECT * FROM database_connections
+                   WHERE db_type = ? AND host = ? AND port = ? AND username = ? AND db_name = ?''',
+                (db_type, host, port, username, database)
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_connection(row)
+            return None
+        finally:
+            db_conn.close()
+
+    def get_instance_connections(self, db_type: str, host: str, port: int,
+                                 username: str) -> List[DatabaseConnection]:
+        """Get all connections for the same server instance."""
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                '''SELECT * FROM database_connections
+                   WHERE db_type = ? AND host = ? AND port = ? AND username = ?
+                   ORDER BY db_name''',
+                (db_type, host, port, username)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_connection(row) for row in rows]
+        finally:
+            db_conn.close()
 
     # ==================== LLM Provider Methods ====================
 
@@ -1894,4 +1988,451 @@ class SQLiteStorage:
             executed_at=datetime.fromisoformat(row['executed_at']) if row['executed_at'] else None,
             created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
             updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None
+        )
+
+    # ==================== MCP Server Methods ====================
+
+    def add_mcp_server(self, server: MCPServer) -> int:
+        """
+        Add a new MCP server configuration.
+
+        Args:
+            server: MCPServer object (id field is ignored)
+
+        Returns:
+            The ID of the newly created server config
+        """
+        import json as _json
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            now = datetime.now().isoformat()
+
+            cursor.execute('''
+                INSERT INTO mcp_servers
+                (name, command, args, env, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                server.name,
+                server.command,
+                server.args if isinstance(server.args, str) else _json.dumps(server.args),
+                server.env if isinstance(server.env, str) or server.env is None else _json.dumps(server.env),
+                1 if server.enabled else 0,
+                now,
+                now
+            ))
+
+            db_conn.commit()
+            return cursor.lastrowid
+        finally:
+            db_conn.close()
+
+    def get_mcp_server(self, name: str) -> Optional[MCPServer]:
+        """
+        Get an MCP server configuration by name.
+
+        Args:
+            name: Server name
+
+        Returns:
+            MCPServer object or None if not found
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                'SELECT * FROM mcp_servers WHERE name = ?',
+                (name,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_mcp_server(row)
+            return None
+        finally:
+            db_conn.close()
+
+    def get_mcp_server_by_id(self, server_id: int) -> Optional[MCPServer]:
+        """Get an MCP server configuration by ID."""
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                'SELECT * FROM mcp_servers WHERE id = ?',
+                (server_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_mcp_server(row)
+            return None
+        finally:
+            db_conn.close()
+
+    def list_mcp_servers(self, enabled_only: bool = False) -> List[Dict]:
+        """
+        List all MCP server configurations.
+
+        Args:
+            enabled_only: If True, only return enabled servers
+
+        Returns:
+            List of server configuration dictionaries
+        """
+        import json as _json
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            if enabled_only:
+                cursor.execute('SELECT * FROM mcp_servers WHERE enabled = 1 ORDER BY name')
+            else:
+                cursor.execute('SELECT * FROM mcp_servers ORDER BY name')
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row['id'],
+                    'name': row['name'],
+                    'command': row['command'],
+                    'args': _json.loads(row['args']) if row['args'] else [],
+                    'env': _json.loads(row['env']) if row['env'] else None,
+                    'enabled': bool(row['enabled']),
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
+                })
+            return result
+        finally:
+            db_conn.close()
+
+    def update_mcp_server(self, server: MCPServer) -> bool:
+        """
+        Update an existing MCP server configuration.
+
+        Args:
+            server: MCPServer object with updated values
+
+        Returns:
+            True if update was successful
+        """
+        import json as _json
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            now = datetime.now().isoformat()
+
+            cursor.execute('''
+                UPDATE mcp_servers
+                SET command = ?, args = ?, env = ?, enabled = ?, updated_at = ?
+                WHERE name = ?
+            ''', (
+                server.command,
+                server.args if isinstance(server.args, str) else _json.dumps(server.args),
+                server.env if isinstance(server.env, str) or server.env is None else _json.dumps(server.env),
+                1 if server.enabled else 0,
+                now,
+                server.name
+            ))
+
+            db_conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            db_conn.close()
+
+    def delete_mcp_server(self, name: str) -> bool:
+        """
+        Delete an MCP server configuration.
+
+        Args:
+            name: Server name
+
+        Returns:
+            True if deletion was successful
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                'DELETE FROM mcp_servers WHERE name = ?',
+                (name,)
+            )
+            db_conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            db_conn.close()
+
+    def enable_mcp_server(self, name: str, enabled: bool = True) -> bool:
+        """
+        Enable or disable an MCP server.
+
+        Args:
+            name: Server name
+            enabled: Whether to enable (True) or disable (False)
+
+        Returns:
+            True if update was successful
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            now = datetime.now().isoformat()
+
+            cursor.execute(
+                'UPDATE mcp_servers SET enabled = ?, updated_at = ? WHERE name = ?',
+                (1 if enabled else 0, now, name)
+            )
+
+            db_conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            db_conn.close()
+
+    def _row_to_mcp_server(self, row: sqlite3.Row) -> MCPServer:
+        """Convert a database row to MCPServer object"""
+        return MCPServer(
+            id=row['id'],
+            name=row['name'],
+            command=row['command'],
+            args=row['args'],
+            env=row['env'],
+            enabled=bool(row['enabled']),
+            created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
+            updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None
+        )
+
+    # ==================== Audit Log Methods ====================
+
+    def add_audit_log(self, log: AuditLog) -> int:
+        """
+        Add a new audit log entry.
+
+        Args:
+            log: AuditLog object (id field is ignored)
+
+        Returns:
+            The ID of the newly created audit log
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            now = datetime.now().isoformat()
+
+            cursor.execute('''
+                INSERT INTO audit_logs
+                (session_id, connection_id, category, action, target_type, target_name,
+                 sql_text, parameters, result_status, result_summary, affected_rows,
+                 execution_time_ms, user_confirmed, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                log.session_id,
+                log.connection_id,
+                log.category,
+                log.action,
+                log.target_type,
+                log.target_name,
+                log.sql_text,
+                log.parameters,
+                log.result_status,
+                log.result_summary,
+                log.affected_rows,
+                log.execution_time_ms,
+                1 if log.user_confirmed else 0,
+                now
+            ))
+
+            db_conn.commit()
+            return cursor.lastrowid
+        finally:
+            db_conn.close()
+
+    def get_audit_logs(self, limit: int = 100, offset: int = 0) -> List[AuditLog]:
+        """
+        Get audit logs with pagination.
+
+        Args:
+            limit: Maximum number of logs to return
+            offset: Number of logs to skip
+
+        Returns:
+            List of AuditLog objects ordered by created_at DESC
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                'SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ? OFFSET ?',
+                (limit, offset)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_audit_log(row) for row in rows]
+        finally:
+            db_conn.close()
+
+    def get_audit_logs_by_session(self, session_id: int, limit: int = 100) -> List[AuditLog]:
+        """
+        Get audit logs for a specific session.
+
+        Args:
+            session_id: Session ID
+            limit: Maximum number of logs to return
+
+        Returns:
+            List of AuditLog objects ordered by created_at DESC
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                'SELECT * FROM audit_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?',
+                (session_id, limit)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_audit_log(row) for row in rows]
+        finally:
+            db_conn.close()
+
+    def get_audit_logs_by_category(self, category: str, limit: int = 100) -> List[AuditLog]:
+        """
+        Get audit logs by category.
+
+        Args:
+            category: Log category (sql_execute, tool_call, config_change)
+            limit: Maximum number of logs to return
+
+        Returns:
+            List of AuditLog objects ordered by created_at DESC
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                'SELECT * FROM audit_logs WHERE category = ? ORDER BY created_at DESC LIMIT ?',
+                (category, limit)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_audit_log(row) for row in rows]
+        finally:
+            db_conn.close()
+
+    def get_audit_logs_by_time_range(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int = 1000
+    ) -> List[AuditLog]:
+        """
+        Get audit logs within a time range.
+
+        Args:
+            start_time: Start of time range
+            end_time: End of time range
+            limit: Maximum number of logs to return
+
+        Returns:
+            List of AuditLog objects ordered by created_at DESC
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                '''SELECT * FROM audit_logs
+                   WHERE created_at >= ? AND created_at <= ?
+                   ORDER BY created_at DESC LIMIT ?''',
+                (start_time.isoformat(), end_time.isoformat(), limit)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_audit_log(row) for row in rows]
+        finally:
+            db_conn.close()
+
+    def get_recent_sql_executions(self, limit: int = 50) -> List[AuditLog]:
+        """
+        Get recent SQL execution logs.
+
+        Args:
+            limit: Maximum number of logs to return
+
+        Returns:
+            List of AuditLog objects for SQL executions
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            cursor.execute(
+                '''SELECT * FROM audit_logs
+                   WHERE category = 'sql_execute'
+                   ORDER BY created_at DESC LIMIT ?''',
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_audit_log(row) for row in rows]
+        finally:
+            db_conn.close()
+
+    def cleanup_old_audit_logs(self, days: int = 30) -> int:
+        """
+        Delete audit logs older than specified days.
+
+        Args:
+            days: Number of days to keep
+
+        Returns:
+            Number of deleted logs
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            from datetime import timedelta
+            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+            cursor.execute(
+                'DELETE FROM audit_logs WHERE created_at < ?',
+                (cutoff_date,)
+            )
+            deleted_count = cursor.rowcount
+            db_conn.commit()
+            return deleted_count
+        finally:
+            db_conn.close()
+
+    def get_audit_log_count(self, category: str = None) -> int:
+        """
+        Get count of audit logs.
+
+        Args:
+            category: Optional category filter
+
+        Returns:
+            Number of audit logs
+        """
+        db_conn = self._get_connection()
+        try:
+            cursor = db_conn.cursor()
+            if category:
+                cursor.execute(
+                    'SELECT COUNT(*) as count FROM audit_logs WHERE category = ?',
+                    (category,)
+                )
+            else:
+                cursor.execute('SELECT COUNT(*) as count FROM audit_logs')
+            row = cursor.fetchone()
+            return row['count'] if row else 0
+        finally:
+            db_conn.close()
+
+    def _row_to_audit_log(self, row: sqlite3.Row) -> AuditLog:
+        """Convert a database row to AuditLog object"""
+        return AuditLog(
+            id=row['id'],
+            session_id=row['session_id'],
+            connection_id=row['connection_id'],
+            category=row['category'],
+            action=row['action'],
+            target_type=row['target_type'],
+            target_name=row['target_name'],
+            sql_text=row['sql_text'],
+            parameters=row['parameters'],
+            result_status=row['result_status'],
+            result_summary=row['result_summary'],
+            affected_rows=row['affected_rows'],
+            execution_time_ms=row['execution_time_ms'],
+            user_confirmed=bool(row['user_confirmed']),
+            created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None
         )

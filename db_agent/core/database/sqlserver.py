@@ -346,6 +346,10 @@ class SQLServerTools(BaseDatabaseTools):
                 "error": t("db_only_select")
             }
 
+        func_check = self._check_function_call_in_select(sql_upper)
+        if func_check:
+            return func_check
+
         conn = self.get_connection()
         try:
             cur = conn.cursor()
@@ -1014,6 +1018,40 @@ class SQLServerTools(BaseDatabaseTools):
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            conn.close()
+
+    def list_databases(self) -> Dict[str, Any]:
+        """List all databases on the SQL Server instance"""
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT d.name,
+                       CAST(ROUND(SUM(mf.size) * 8.0 / 1024, 2) AS VARCHAR) + ' MB' AS size,
+                       suser_sname(d.owner_sid) AS owner,
+                       d.state_desc AS state
+                FROM sys.databases d
+                LEFT JOIN sys.master_files mf ON d.database_id = mf.database_id
+                WHERE d.database_id > 4
+                GROUP BY d.name, d.owner_sid, d.state_desc
+                ORDER BY d.name
+            """)
+            columns = [desc[0].lower() for desc in cur.description]
+            databases = [dict(zip(columns, row)) for row in cur.fetchall()]
+            current_db = self.db_config.get("database", "")
+            for db in databases:
+                db["is_current"] = (db["name"] == current_db)
+            return {
+                "status": "success",
+                "current_database": current_db,
+                "instance": f"{self.db_config.get('host', 'localhost')}:{self.db_config.get('port', 1433)}",
+                "count": len(databases),
+                "databases": databases
+            }
+        except Exception as e:
+            logger.error(f"Failed to list databases: {e}")
+            return {"status": "error", "error": str(e)}
         finally:
             conn.close()
 

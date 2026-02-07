@@ -12,6 +12,7 @@ from datetime import datetime
 from db_agent.core import SQLTuningAgent
 from db_agent.llm import LLMClientFactory
 from db_agent.i18n import t
+from db_agent.api.v2.app import create_v2_router
 import logging
 
 # 配置日志
@@ -35,6 +36,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount v2 API router
+app.include_router(create_v2_router(), prefix="/api/v2")
 
 # 全局Agent实例存储
 agents: Dict[str, SQLTuningAgent] = {}
@@ -278,6 +282,13 @@ async def health_check():
         "active_sessions": len(agents),
         "timestamp": datetime.now().isoformat()
     }
+
+# Serve static frontend files (production build)
+import os as _os
+_web_dist = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), 'web', 'dist')
+if _os.path.isdir(_web_dist):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_web_dist, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
